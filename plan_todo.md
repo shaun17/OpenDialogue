@@ -528,19 +528,18 @@ Plugin B 重连（携带 last_message_id）
 
 ---
 
-### 🚧 Phase 2 — Server 实现（依赖 Phase 1 完成后启动）
+### 🚧 Phase 2 — Server（独立项目，不在本仓库）
 
-> ⚠️ 当前阻塞，等待 Phase 1 完成后开始。Server 协议规范已在 Phase 1 的 Mock Server 中验证和固化。
+> ⚠️ Server 将作为独立仓库单独开发，本仓库（Skill）不包含 Server 代码。
+> Plugin 的 `daemon.ts` 对接 Server 的协议接口，该接口规范通过 Mock Server 先行验证固化。
 
-- [ ] **Server**：WebSocket 连接管理（注册、路由表、断线清理）
-- [ ] **Server**：Agent 注册 API（`POST /register`，生成 AGENT_TOKEN，邮箱验证激活）
-- [ ] **Server**：Session Key 生成、下发、每小时轮换
-- [ ] **Server**：消息转发与 HMAC 签名验证
-- [ ] **Server**：`GET /status/:agentId` 在线状态查询
-- [ ] **Server**：离线消息队列（内存 MVP，`message_id` 递增）
-- [ ] **Server**：重连补发（Plugin 携带 `last_message_id` → 补发缺失消息）
-- [ ] **Server**：速率限制（每连接 20 条/s）
-- [ ] **Server**：多点登录检测（同 AgentID 第二次连接告警）
+**接口约定（Plugin 侧需遵守，Server 实现时对齐）**
+
+- `WSS /connect`，Header: `Authorization: Bearer <AGENT_TOKEN>`
+- 握手后 Server 推送：`{ type: "session", session_key: "...", expires_in: 3600 }`
+- 消息格式：见第 4.2 节消息结构
+- 重连携带：`{ type: "reconnect", last_message_id: "..." }`
+- 心跳：Plugin 发 `{ type: "ping" }`，Server 回 `{ type: "pong" }`
 
 ---
 
@@ -566,46 +565,93 @@ Plugin B 重连（携带 last_message_id）
 
 ## 8. 目录结构
 
+### 核心架构关系
+
 ```
-OpenDialogue/
+OpenClaw（用户对话）
+    │ 触发 Skill
+    ▼
+SKILL.md（Claude 读取，理解如何操作）
+    │ 执行 bash 命令
+    ▼
+plugin/dist/（编译后的守护进程，独立后台运行）
+    │ HTTP 127.0.0.1:18791
+    ├─── Skill 查询状态 / 发送消息（双向通信）
+    │
+    │ WebSocket（连接 Mock/真实 Server）
+    └─── 收到消息 → POST 127.0.0.1:18789/hooks/agent → 唤醒 OpenClaw
+```
+
+- **`SKILL.md`**：告诉 Claude 该做什么，由 OpenClaw 在 Skill 被触发时读取
+- **`plugin/`**：TypeScript 源码，Skill 安装时编译（`npm run build`），产物跑为守护进程
+- **`plugin/` 不被 OpenClaw 直接读取**，只有编译后的 `dist/` 以进程形式运行
+- **Skill ↔ 守护进程** 通过本地 HTTP（`127.0.0.1:18791`）通信
+- **守护进程 ↔ OpenClaw** 通过 Hook（`127.0.0.1:18789/hooks/agent`）单向推送
+
+### 文件结构
+
+```
+OpenDialogue/                      # 整个仓库 = 一个 Skill
+├── SKILL.md                       # Skill 入口：frontmatter(name/description) + Claude 操作指令
 ├── plan_todo.md                   # 本文件
 │
-├── mock-server/                   # 本地开发用 Mock Server（Phase 1.5）
-│   ├── index.ts                   # Mock WebSocket Server
-│   └── package.json
+├── references/                    # SKILL.md 的补充说明文档（Claude 按需 Read）
+│   ├── setup.md                   # 安装引导：AGENT_TOKEN 获取流程、常见问题
+│   └── commands.md                # 用户指令详解：查看状态、发消息、查未读
 │
-├── server/                        # 云端中继服务（Phase 2，Node.js + TypeScript）
+├── plugin/                        # 守护进程 TypeScript 源码
 │   ├── src/
-│   │   ├── index.ts               # 入口，启动 HTTP + WSS 服务
-│   │   ├── ws-manager.ts          # WebSocket 连接管理与路由表
-│   │   ├── router.ts              # 消息路由与转发
-│   │   ├── session-key.ts         # Session Key 生成、下发、轮换
-│   │   ├── offline-queue.ts       # 离线消息队列
-│   │   └── auth.ts                # AGENT_TOKEN 验证
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── docker-compose.yml
-│
-├── plugin/                        # 本地守护进程（Phase 1，Node.js + TypeScript）
-│   ├── src/
-│   │   ├── index.ts               # 入口，初始化所有模块
+│   │   ├── index.ts               # 入口：按序初始化各模块
 │   │   ├── config.ts              # openclaw.json 读写，HOOK_TOKEN 管理
-│   │   ├── daemon.ts              # WSS 长连接主循环
+│   │   ├── daemon.ts              # WSS 长连接主循环（连接 Server/Mock）
 │   │   ├── security.ts            # 签名验证、防重放、白名单
-│   │   ├── hook-client.ts         # 调用 OpenClaw Hook（防 Prompt Injection）
+│   │   ├── hook-client.ts         # POST → OpenClaw Hook（防 Prompt Injection）
 │   │   ├── gateway-probe.ts       # OpenClaw Gateway 健康探测
 │   │   ├── message-queue.ts       # 本地内存消息队列（上限 100 条）
-│   │   ├── status-server.ts       # 本地状态 HTTP 接口（18791）
-│   │   ├── installer.ts           # 系统服务注册（launchd/systemd/NSSM）
-│   │   └── uninstaller.ts         # 系统服务卸载与优雅退出
+│   │   ├── status-server.ts       # HTTP 接口（127.0.0.1:18791），供 Skill 调用
+│   │   ├── installer.ts           # 注册系统守护进程（launchd/systemd/NSSM）
+│   │   └── uninstaller.ts         # 卸载系统服务、优雅退出
 │   ├── package.json
 │   └── tsconfig.json
+│   # ↑ npm run build → dist/（实际运行的是 dist/，不是 src/）
 │
-└── skill/                         # OpenClaw Skill（Phase 1）
-    ├── SKILL.md                   # Skill 主文件（触发词、元数据、安装配置）
-    └── references/
-        ├── setup.md               # 安装引导说明
-        └── commands.md            # 可用指令详细说明
+└── mock-server/                   # 开发调试用 Mock WebSocket Server（不发布）
+    ├── index.ts
+    └── package.json
+```
+
+> **Server 说明**：真实 Server 在本仓库中不实现，将作为独立项目单独开发。当前阶段 `daemon.ts` 连接 `mock-server` 进行本地验证。
+
+### SKILL.md 格式
+
+```markdown
+---
+name: opendialogue
+description: "连接 OpenDialogue 平台，实现 OpenClaw Agent 之间实时通讯。
+  触发词：查看 OpenDialogue 状态 / 和 Agent X 说… / 查看未读消息 /
+  安装 OpenDialogue / 卸载 OpenDialogue"
+---
+
+# OpenDialogue Skill 操作指南
+
+## 首次安装
+1. `node --version` 确认 Node.js 已安装
+2. `cd plugin && npm install && npm run build`
+3. `node dist/installer.js`（注册系统守护进程）
+4. 引导用户设置 AGENT_TOKEN（见 references/setup.md）
+5. `curl http://127.0.0.1:18791/status` 验证守护进程已启动
+
+## 查看状态
+GET http://127.0.0.1:18791/status → 格式化输出
+
+## 发送消息给指定 Agent
+POST http://127.0.0.1:18791/send  body: { "to": "<agentId>", "content": "..." }
+
+## 查看未读消息
+GET http://127.0.0.1:18791/queue
+
+## 卸载
+`node plugin/dist/uninstaller.js`
 ```
 
 ---
