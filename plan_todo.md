@@ -357,55 +357,210 @@ Plugin B 重连（携带 last_message_id）
 
 ## 7. TODO 任务列表
 
-### Phase 1 — 核心骨架
+> **当前阶段**：Server 尚未实现，优先完成 **Phase 0（Plugin ↔ OpenClaw 交互）** 和 **Phase 1（Skill 骨架）**，用 Mock Server 验证端到端流程。Server 开发在 Phase 2 启动。
 
-- [ ] **Server**：WebSocket 连接管理（注册、路由、断线清理）
-- [ ] **Server**：Agent 注册 API（生成 AGENT_TOKEN、claim URL、人工验证）
-- [ ] **Server**：Session Key 生成与下发
-- [ ] **Server**：消息转发与签名验证
-- [ ] **Plugin**：WSS 建立连接、握手、获取 SESSION_KEY
-- [ ] **Plugin**：心跳保活（30s ping）
-- [ ] **Plugin**：指数退避重连（1s → 2s → 4s，上限 30s）
-- [ ] **Plugin**：HOOK_TOKEN 自动读取 / 生成写入 openclaw.json
-- [ ] **Plugin**：Gateway 健康探测（每 2s，最多 2min）
-- [ ] **Plugin**：本地内存消息队列（上限 100 条）
-- [ ] **Plugin**：结构化转发到 OpenClaw Hook（防 Prompt Injection）
-- [ ] **Skill**：SKILL.md 编写（触发词、行为描述）
-- [ ] **Skill**：installer.ts（系统服务注册，三平台）
-- [ ] **Skill**：uninstaller.ts（优雅退出 + 服务卸载）
+---
 
-### Phase 2 — 安全加固
+### ✅ Phase 0 — 摸清 OpenClaw Hook 机制（前置调研）
 
-- [ ] HMAC-SHA256 消息签名与验证
-- [ ] nonce + timestamp 防重放（5 分钟窗口缓存）
-- [ ] 消息内容白名单过滤（类型、长度、控制字符）
-- [ ] 证书指纹校验（Certificate Pinning）
-- [ ] 设备指纹绑定（机器 UUID + 安装路径 hash）
-- [ ] Token 存储迁移到系统密钥链（keytar npm 包）
-- [ ] Session Key 轮换（Plugin 端接收新 Key 替换）
-- [ ] 异常检测：频率限制（20条/s）、多点登录告警、连续签名失败
+> 目标：在写任何代码之前，先确认 OpenClaw 的 Hook 接口规范，所有后续实现都依赖这些细节。
 
-### Phase 3 — 离线消息
+- [ ] **[调研] 确认 Hook 触发接口**
+  - 接口地址是否为 `POST http://127.0.0.1:18789/hooks/agent`？
+  - Content-Type 是 `application/json` 吗？
+  - 鉴权方式：`Authorization: Bearer <HOOK_TOKEN>`，还是 Query 参数，还是其他？
 
-- [ ] Server 端离线队列（内存 MVP，Redis 生产）
-- [ ] Plugin 重连携带 `last_message_id`
-- [ ] Server 补发逻辑
-- [ ] 队列 24 小时超时清理
+- [ ] **[调研] 确认 Hook 请求体格式**
+  - `message`（触发 prompt）、`context`（附加数据）、`name`（来源标识）、`wakeMode` 字段是否都被支持？
+  - `wakeMode: "now"` 是否会立即唤醒 Agent 处理消息？
+  - Hook 的响应格式（成功/失败的 HTTP 状态码和 body）？
 
-### Phase 4 — 可观测性
+- [ ] **[调研] 确认 openclaw.json 配置结构**
+  - `hooks.token` 字段的确切路径？（`hooks.token` 还是 `hooks[0].token`？）
+  - OpenClaw 是否真的监听配置文件变化并热重载？热重载延迟大约多少？
+  - 配置文件完整 schema（方便 Plugin 安全读写，避免破坏其他配置项）？
 
-- [ ] Plugin 本地状态接口（127.0.0.1:18791/status）
-- [ ] Skill 响应用户状态查询
-- [ ] 告警通知（通过 OpenClaw 已配置的 IM 渠道推送）
-- [ ] Server 端基础监控（连接数、消息吞吐量）
+- [ ] **[调研] 确认 Gateway 健康检查接口**
+  - `GET http://127.0.0.1:18789/health` 是否存在？响应格式？
+  - 是否有其他更可靠的方式判断 OpenClaw 是否就绪？
 
-### Phase 5 — 发布
+---
 
-- [ ] Plugin npm 包打包发布（`opendialogue-plugin`）
+### 🔧 Phase 1 — Skill 骨架（Plugin ↔ OpenClaw 核心链路）
+
+> 目标：不依赖真实 Server，通过 Mock Server 验证 Skill 安装 → Plugin 启动 → 接收消息 → 触发 OpenClaw Hook 全链路。
+
+#### 1.1 Skill 定义
+
+- [ ] **编写 `skill/SKILL.md`**
+  - Skill 元数据（name, version, description）
+  - `requires.bins: [node]`（依赖 Node.js 运行时）
+  - `install` 配置：npm 包安装方式（`opendialogue-plugin`）
+  - `primaryEnv: OPENDIALOGUE_AGENT_TOKEN`（引导用户配置 Token）
+  - 完整的 Skill 触发词列表（中英文）
+
+- [ ] **编写 `skill/references/commands.md`**
+  - 详细描述每条用户指令的行为和参数
+  - `查看状态` → 调用 Plugin 状态接口的具体逻辑
+  - `发消息给 Agent [id]` → 调用 Plugin 发送接口的请求格式
+  - `查看未读消息` → 响应格式示例
+
+- [ ] **编写 `skill/references/setup.md`**
+  - 安装引导步骤（获取 AGENT_TOKEN 的注册流程说明）
+  - 常见安装失败原因及解决方案
+
+#### 1.2 Plugin 核心模块
+
+- [ ] **`plugin/src/config.ts` — 配置读写**
+  - 读取 `~/.openclaw/openclaw.json`，提取 `hooks.token`
+  - 若 `hooks.token` 不存在：生成 32 字节随机 hex，写回配置文件，设置 chmod 600
+  - 写入时只修改 `hooks` 字段，不破坏其他配置项（JSON merge，非覆盖写）
+  - 导出：`getHookToken(): Promise<string>`
+
+- [ ] **`plugin/src/gateway-probe.ts` — OpenClaw 健康探测**
+  - `GET http://127.0.0.1:18789/health`，超时 1s
+  - 未就绪：每 2 秒重试，最多重试 60 次（2 分钟）
+  - 超时仍未就绪：记录警告，进入消息队列缓冲模式（不抛出异常，静默等待）
+  - 就绪后触发回调：`onGatewayReady()`
+  - 导出：`waitForGateway(onReady: () => void): void`
+
+- [ ] **`plugin/src/hook-client.ts` — 调用 OpenClaw Hook**
+  - `POST http://127.0.0.1:18789/hooks/agent`
+  - 请求体格式：
+    ```json
+    {
+      "message": "你收到来自另一个 Agent 的消息，请阅读 context 中的 content 字段并回复",
+      "context": {
+        "source": "opendialogue",
+        "from_agent": "<agentId>",
+        "content": "<原始消息内容，独立字段，防 Prompt Injection>"
+      },
+      "name": "OpenDialogue",
+      "wakeMode": "now"
+    }
+    ```
+  - 鉴权 Header：`Authorization: Bearer <HOOK_TOKEN>`
+  - 失败重试：3 次，指数退避（500ms → 1s → 2s）
+  - 导出：`sendToHook(fromAgent: string, content: string): Promise<void>`
+
+- [ ] **`plugin/src/message-queue.ts` — 本地内存消息队列**
+  - 环形队列，上限 100 条，超出时丢弃最旧的消息并打 warn 日志
+  - `enqueue(msg: IncomingMessage): void`
+  - `flush(handler: (msg) => Promise<void>): Promise<void>`（逐条处理，失败则重新入队）
+  - `size(): number`
+
+- [ ] **`plugin/src/daemon.ts` — WebSocket 长连接主循环**（当前使用 Mock Server）
+  - 连接 `wss://<SERVER_URL>/connect`，Header 携带 `Authorization: Bearer <AGENT_TOKEN>`
+  - 握手成功：解析 `{ type: "session", session_key: "...", expires_in: 3600 }` 消息，存入内存
+  - 接收消息：调用安全验证模块，通过后入队或直接转发 Hook
+  - 心跳：每 30 秒发送 `{ type: "ping" }`，超过 60 秒无响应则主动重连
+  - 重连策略：指数退避（1s → 2s → 4s → ... → 30s 上限）
+  - 优雅关闭：捕获 SIGTERM，flush 队列后关闭连接
+
+- [ ] **`plugin/src/security.ts` — 消息安全验证**
+  - HMAC-SHA256 验签（`timing-safe` 比较，防时序攻击）
+  - timestamp 窗口检查（±5 分钟）
+  - nonce 去重缓存（5 分钟 TTL，Map + 定时清理）
+  - 消息类型白名单：`["text", "typing", "read_receipt"]`
+  - content 长度限制：≤ 2000 字符
+  - content 控制字符过滤：`/[\x00-\x08\x0b\x0c\x0e-\x1f]/`
+  - 导出：`validateMessage(msg: unknown, sessionKey: string): IncomingMessage`（失败抛异常）
+
+- [ ] **`plugin/src/status-server.ts` — 本地状态 HTTP 接口**
+  - 监听 `http://127.0.0.1:18791`
+  - `GET /status` 响应：
+    ```json
+    {
+      "connected": true,
+      "server_url": "wss://...",
+      "agent_id": "...",
+      "queue_size": 0,
+      "gateway_ready": true,
+      "uptime_seconds": 123
+    }
+    ```
+  - `POST /send` 接受 Skill 发出的主动消息（body: `{ to, content }`），构造消息包通过 WSS 发出
+
+- [ ] **`plugin/src/index.ts` — 入口整合**
+  - 按顺序初始化：config → gateway-probe → daemon → status-server
+  - 处理全局未捕获异常，写入日志文件 `~/.openclaw/opendialogue.log`
+
+#### 1.3 Skill 安装 / 卸载脚本
+
+- [ ] **`plugin/src/installer.ts` — 系统服务注册**
+  - 读取 `config.ts` 确保 HOOK_TOKEN 已写入 openclaw.json
+  - **macOS**：生成 `~/Library/LaunchAgents/com.opendialogue.plugin.plist`，调用 `launchctl load`
+  - **Linux**：生成 `~/.config/systemd/user/opendialogue.service`，调用 `systemctl --user enable --now`
+  - **Windows**：调用 NSSM 注册 Windows Service
+  - 注册完毕后等待 3 秒，调用 `GET /status` 验证 Plugin 已成功启动
+  - 输出安装结果给 Skill（成功/失败信息）
+
+- [ ] **`plugin/src/uninstaller.ts` — 优雅卸载**
+  - 向守护进程发送 SIGTERM
+  - 等待最多 10 秒让 Plugin flush 队列
+  - 强制卸载系统服务（launchctl unload / systemctl disable / nssm remove）
+  - 可选：清理 openclaw.json 中的 hooks 配置
+
+#### 1.4 工程配置
+
+- [ ] **`plugin/package.json`**：依赖声明（`ws`, `keytar`, `uuid`，DevDependencies: TypeScript, ts-node）
+- [ ] **`plugin/tsconfig.json`**：`target: ES2022`，`module: CommonJS`，严格模式开启
+- [ ] **`.gitignore`**：排除 `node_modules/`, `dist/`, `*.log`
+
+---
+
+### 🧪 Phase 1.5 — Mock Server + 端到端测试
+
+> 目标：在真实 Server 开发完成前，用 Mock Server 验证 Plugin ↔ OpenClaw 全链路。
+
+- [ ] **`mock-server/index.ts` — 本地 Mock WebSocket Server**
+  - 监听 `ws://127.0.0.1:19000/connect`（本地开发用，不强制 TLS）
+  - 接受 Plugin 连接后，立即推送 `{ type: "session", session_key: "mock-key-for-dev", expires_in: 3600 }`
+  - 提供 CLI 命令：`send <agentId> <content>` → 构造完整消息包（含 HMAC 签名）推送给 Plugin
+  - 响应 Plugin 的 `{ type: "ping" }` → 回复 `{ type: "pong" }`
+
+- [ ] **端到端集成测试**
+  - 启动 Mock Server → 启动 Plugin → Plugin 握手成功
+  - Mock Server 发送测试消息 → Plugin 安全验证通过 → Plugin 调用 OpenClaw Hook
+  - 验证 Hook 请求体格式正确（content 独立于 message，Prompt Injection 防护有效）
+  - 验证篡改签名的消息被丢弃，不触发 Hook
+  - 验证 nonce 重复的消息被丢弃
+
+---
+
+### 🚧 Phase 2 — Server 实现（依赖 Phase 1 完成后启动）
+
+> ⚠️ 当前阻塞，等待 Phase 1 完成后开始。Server 协议规范已在 Phase 1 的 Mock Server 中验证和固化。
+
+- [ ] **Server**：WebSocket 连接管理（注册、路由表、断线清理）
+- [ ] **Server**：Agent 注册 API（`POST /register`，生成 AGENT_TOKEN，邮箱验证激活）
+- [ ] **Server**：Session Key 生成、下发、每小时轮换
+- [ ] **Server**：消息转发与 HMAC 签名验证
+- [ ] **Server**：`GET /status/:agentId` 在线状态查询
+- [ ] **Server**：离线消息队列（内存 MVP，`message_id` 递增）
+- [ ] **Server**：重连补发（Plugin 携带 `last_message_id` → 补发缺失消息）
+- [ ] **Server**：速率限制（每连接 20 条/s）
+- [ ] **Server**：多点登录检测（同 AgentID 第二次连接告警）
+
+---
+
+### 🔐 Phase 3 — 安全加固（Server 完成后）
+
+- [ ] AGENT_TOKEN 存储迁移到系统密钥链（`keytar` npm 包）
+- [ ] 证书指纹校验（Certificate Pinning，SHA-256 指纹硬编码）
+- [ ] 设备指纹绑定（机器 UUID + OpenClaw 安装路径 hash）
+- [ ] Session Key 轮换（Plugin 端无缝替换，旧 Key 宽限 60 秒）
+- [ ] 连续 3 次签名失败 → 断线 + IM 告警
+
+---
+
+### 📦 Phase 4 — 发布准备
+
+- [ ] Plugin npm 包打包（`opendialogue-plugin`），发布到 npm registry
 - [ ] Skill 发布到 ClawHub（`opendialogue`）
-- [ ] README 文档
-- [ ] Server 部署文档（Docker Compose）
+- [ ] Server Docker Compose 部署文档
 - [ ] 安全最佳实践文档
+- [ ] README.md 完善（Quick Start、配置说明、架构图）
 
 ---
 
@@ -415,7 +570,11 @@ Plugin B 重连（携带 last_message_id）
 OpenDialogue/
 ├── plan_todo.md                   # 本文件
 │
-├── server/                        # 云端中继服务（Node.js + TypeScript）
+├── mock-server/                   # 本地开发用 Mock Server（Phase 1.5）
+│   ├── index.ts                   # Mock WebSocket Server
+│   └── package.json
+│
+├── server/                        # 云端中继服务（Phase 2，Node.js + TypeScript）
 │   ├── src/
 │   │   ├── index.ts               # 入口，启动 HTTP + WSS 服务
 │   │   ├── ws-manager.ts          # WebSocket 连接管理与路由表
@@ -427,26 +586,26 @@ OpenDialogue/
 │   ├── tsconfig.json
 │   └── docker-compose.yml
 │
-├── plugin/                        # 本地守护进程（Node.js + TypeScript）
+├── plugin/                        # 本地守护进程（Phase 1，Node.js + TypeScript）
 │   ├── src/
-│   │   ├── index.ts               # 入口
+│   │   ├── index.ts               # 入口，初始化所有模块
+│   │   ├── config.ts              # openclaw.json 读写，HOOK_TOKEN 管理
 │   │   ├── daemon.ts              # WSS 长连接主循环
 │   │   ├── security.ts            # 签名验证、防重放、白名单
-│   │   ├── hook-client.ts         # 调用 OpenClaw Hook
-│   │   ├── token-store.ts         # 系统密钥链读写（keytar）
+│   │   ├── hook-client.ts         # 调用 OpenClaw Hook（防 Prompt Injection）
 │   │   ├── gateway-probe.ts       # OpenClaw Gateway 健康探测
-│   │   ├── message-queue.ts       # 本地内存消息队列
+│   │   ├── message-queue.ts       # 本地内存消息队列（上限 100 条）
 │   │   ├── status-server.ts       # 本地状态 HTTP 接口（18791）
-│   │   ├── installer.ts           # 系统服务注册（三平台）
+│   │   ├── installer.ts           # 系统服务注册（launchd/systemd/NSSM）
 │   │   └── uninstaller.ts         # 系统服务卸载与优雅退出
 │   ├── package.json
 │   └── tsconfig.json
 │
-└── skill/                         # OpenClaw Skill
-    ├── SKILL.md                   # Skill 主文件（注册入口）
+└── skill/                         # OpenClaw Skill（Phase 1）
+    ├── SKILL.md                   # Skill 主文件（触发词、元数据、安装配置）
     └── references/
         ├── setup.md               # 安装引导说明
-        └── commands.md            # 可用指令说明
+        └── commands.md            # 可用指令详细说明
 ```
 
 ---
@@ -463,7 +622,10 @@ OpenDialogue/
 | SESSION_KEY 存储 | 内存 / 加密文件 | 内存（进程内，重连重新获取） |
 | Plugin 与 Skill 关系 | 同一 npm 包 / 分开发布 | 同一包，Skill 目录内嵌 |
 | 多 Agent 支持 | 每台机器单 Agent / 多 Agent | 单 Agent（MVP），多 Agent 后续 |
+| **🆕 Hook 鉴权方式** | Bearer Header / Query Param / 无鉴权 | **待 Phase 0 调研确认** |
+| **🆕 openclaw.json 热重载** | 文件监听 / 需重启 OpenClaw | **待 Phase 0 调研确认** |
+| **🆕 status-server 通信方式** | HTTP / Unix Socket / 直接函数调用 | HTTP（127.0.0.1:18791，简单可调试） |
 
 ---
 
-*文档版本：0.1.0 | 创建于 2026-03*
+*文档版本：0.2.0 | 更新于 2026-03（明确 Plugin ↔ OpenClaw 交互任务，分离 Mock Server 阶段）*
