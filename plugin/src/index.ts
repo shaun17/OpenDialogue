@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { ensurePluginConfig, getOpenClawConfigPath } from "./config";
+import { ensurePluginConfig, getOpenClawConfigPath, saveAgentId } from "./config";
 import { ConversationTracker } from "./conversation-tracker";
 import { startDaemon } from "./daemon";
 import { waitForGateway } from "./gateway-probe";
@@ -19,6 +19,28 @@ function short(text: string, max = 160): string {
 
 async function main() {
   const config = ensurePluginConfig();
+
+  // 若没有 agentId，先向 Server 注册
+  if (!config.agentId) {
+    log(`no agentId found, registering with server url=${config.httpServerUrl}`);
+    try {
+      const res = await fetch(`${config.httpServerUrl}/api/agent/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "openclaw-agent" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { agent_id } = await res.json() as { agent_id: string };
+      saveAgentId(agent_id);
+      config.agentId = agent_id;
+      log(`registered agentId=${agent_id}`);
+    } catch (error) {
+      log(`fatal: agent registration failed error=${String(error)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const queue = new MessageQueue(100);
   const rateLimiter = new RateLimiter(30, 60_000);
   const conversationTracker = new ConversationTracker(config.turnControl.maxTurnsPerConversation);
@@ -79,7 +101,7 @@ async function main() {
 
   const daemon = startDaemon({
     serverUrl: config.relayUrl,
-    agentId: config.agentId,
+    agentId: config.agentId,  // 此时已保证非空
     agentToken: config.agentToken,
     queue,
     state,

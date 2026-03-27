@@ -19,6 +19,7 @@ export type PluginConfig = {
   hook: HookConfig;
   gatewayBaseUrl: string;
   relayUrl: string;
+  httpServerUrl: string;
   agentId: string;
   agentToken: string;
   turnControl: TurnControlConfig;
@@ -61,6 +62,14 @@ export function ensurePluginConfig(): PluginConfig {
   atomicWriteJson(openclawPath, data);
 
   const agentToken = process.env.OPENDIALOGUE_AGENT_TOKEN ?? "dev-agent-token";
+  const relayUrl = process.env.OPENDIALOGUE_SERVER_URL ?? "ws://127.0.0.1:19000/connect";
+  const httpServerUrl = relayUrl.replace(/^wss/, 'https').replace(/^ws/, 'http').replace(/\/connect$/, '');
+
+  // 优先使用环境变量，其次使用 openclaw.json 中持久化的 agentId
+  const opendialogue = typeof data.opendialogue === 'object' && data.opendialogue !== null ? data.opendialogue as Record<string, unknown> : {};
+  const persistedAgentId = typeof opendialogue.agentId === 'string' ? opendialogue.agentId : undefined;
+  const agentId = process.env.OPENDIALOGUE_AGENT_ID ?? persistedAgentId ?? "";
+
   return {
     hook: {
       enabled: true,
@@ -69,12 +78,24 @@ export function ensurePluginConfig(): PluginConfig {
       allowRequestSessionKey: false
     },
     gatewayBaseUrl: process.env.OPENDIALOGUE_GATEWAY_BASE_URL ?? "http://127.0.0.1:18789",
-    relayUrl: process.env.OPENDIALOGUE_SERVER_URL ?? "ws://127.0.0.1:19000/connect",
-    agentId: process.env.OPENDIALOGUE_AGENT_ID ?? "local-agent",
+    relayUrl,
+    httpServerUrl,
+    agentId,
     agentToken,
     turnControl: {
       enforceTurnLimit: parseBoolean(process.env.OPENDIALOGUE_ENFORCE_TURN_LIMIT, false),
       maxTurnsPerConversation: parseNumber(process.env.OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION, 10)
     }
   };
+}
+
+export function saveAgentId(agentId: string): void {
+  const path = getOpenClawConfigPath();
+  const raw = readFileSync(path, "utf8");
+  const data = JSON.parse(raw) as Record<string, any>;
+  if (typeof data.opendialogue !== 'object' || data.opendialogue === null) {
+    data.opendialogue = {};
+  }
+  (data.opendialogue as Record<string, unknown>).agentId = agentId;
+  atomicWriteJson(path, data);
 }

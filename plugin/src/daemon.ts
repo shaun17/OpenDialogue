@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import WebSocket from "ws";
 import type { IncomingMessage, MessageQueue } from "./message-queue";
 import { validateMessage } from "./security";
@@ -52,10 +53,16 @@ export function startDaemon(options: DaemonOptions): DaemonHandle {
   const connect = () => {
     if (closed) return;
     options.onEvent?.(`relay connect attempt url=${options.serverUrl}`);
+    const connTs = Date.now();
+    const connNonce = randomBytes(16).toString("hex");
+    const connMaterial = `${options.agentId}|${options.agentId}|server|connect|connect||${connTs}|${connNonce}`;
+    const connSig = createHmac("sha256", options.agentToken).update(connMaterial).digest("hex");
     ws = new WebSocket(options.serverUrl, {
       headers: {
-        authorization: `Bearer ${options.agentToken}`,
-        "x-agent-id": options.agentId
+        "x-agent-id": options.agentId,
+        "x-signature": connSig,
+        "x-timestamp": String(connTs),
+        "x-nonce": connNonce,
       }
     });
 
