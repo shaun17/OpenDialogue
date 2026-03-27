@@ -21,7 +21,8 @@ export function startStatusServer(state: DaemonState, queueSize: () => number, s
         agent_id: state.agentId,
         queue_size: queueSize(),
         gateway_ready: state.gatewayReady,
-        uptime_seconds: Math.floor((Date.now() - startedAt) / 1000)
+        uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
+        last_error: state.lastError ?? null
       }));
       return;
     }

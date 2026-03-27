@@ -23,7 +23,8 @@ async function main() {
     serverUrl: config.relayUrl,
     agentId: config.agentId,
     gatewayReady: false,
-    sessionKey: undefined as string | undefined
+    sessionKey: undefined as string | undefined,
+    lastError: undefined as string | undefined
   };
 
   const forwardToHook = async (msg: { id: string; from: string; to: string; content: string }) => {
@@ -43,30 +44,53 @@ async function main() {
     }
   };
 
-  const ws = startDaemon({
-    serverUrl: config.relayUrl,
-    agentId: config.agentId,
-    agentToken: config.agentToken,
-    queue,
-    state,
-    onAccepted: forwardToHook
-  });
-
-  startStatusServer(state, () => queue.size(), (payload) => {
-    ws.send(payload);
-  });
-
-  log(`plugin boot: relay=${config.relayUrl} agent=${config.agentId}`);
-  state.gatewayReady = await waitForGateway(config.gatewayBaseUrl);
-  log(`gateway ready=${state.gatewayReady}`);
-
-  if (state.gatewayReady) {
+  const flushQueue = async () => {
+    if (!state.gatewayReady || queue.size() === 0) return;
     await queue.flush(async (msg) => {
       log(`flushing queued message id=${msg.id} from=${msg.from}`);
       await forwardToHook(msg);
       log(`flush ok id=${msg.id}`);
     });
-  }
+  };
+
+  const daemon = startDaemon({
+    serverUrl: config.relayUrl,
+    agentId: config.agentId,
+    agentToken: config.agentToken,
+    queue,
+    state,
+    onAccepted: forwardToHook,
+    onDropped: (reason, raw) => {
+      log(`dropped inbound message reason=${reason} raw=${short(String(raw), 240)}`);
+    },
+    onEvent: (line) => {
+      log(line);
+    }
+  });
+
+  startStatusServer(state, () => queue.size(), (payload) => {
+    log(`outbound send requested payload=${short(String(payload), 240)}`);
+    const sent = daemon.send(payload);
+    log(`outbound ws send attempted sent=${sent}`);
+  });
+
+  log(`plugin boot: relay=${config.relayUrl} agent=${config.agentId}`);
+  state.gatewayReady = await waitForGateway(config.gatewayBaseUrl);
+  log(`gateway ready=${state.gatewayReady}`);
+  await flushQueue();
+
+  setInterval(async () => {
+    const wasReady = state.gatewayReady;
+    const isReady = await waitForGateway(config.gatewayBaseUrl, 1, 250);
+    state.gatewayReady = isReady;
+    if (isReady && !wasReady) {
+      log("gateway transitioned to ready");
+      await flushQueue();
+    }
+    if (!isReady && wasReady) {
+      log("gateway transitioned to not-ready");
+    }
+  }, 2000);
 }
 
 main().catch((error) => {

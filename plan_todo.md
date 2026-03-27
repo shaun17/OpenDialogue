@@ -147,7 +147,7 @@ Plugin 启动
   ├─ 探测 OpenClaw Gateway /health
   ├─ 建立与 Mock Server / Relay 的连接
   ├─ 接收 session_key
-  └─ 接收消息 → 验签 → 入队或转发给 /hooks/agent
+  └─ 接收消息 → 验签 → 转发给 /hooks/agent
 ```
 
 ---
@@ -186,6 +186,13 @@ MVP 阶段保留以下校验：
 
 后续如需要更强结构化注入，再基于 OpenClaw 官方 hook mappings / transforms 能力升级。
 
+### 5.4 队列职责边界
+
+- **真实离线消息堆积** 应由未来的 relay / server 负责
+- plugin 侧缓冲只应用于 **本地短暂窗口**，例如已经收到消息但 OpenClaw Gateway 暂时未 ready
+
+plugin 当前的内存队列应理解为 **local transient buffer**，不是 durable offline queue。
+
 ---
 
 ## 6. MVP 消息流程
@@ -200,7 +207,7 @@ Mock Server / Relay
 Plugin
   ├─ 校验签名
   ├─ 校验 timestamp / nonce / type / content
-  ├─ Gateway 未就绪 → 进入本地队列
+  ├─ Gateway 未就绪 → 进入本地短暂缓冲
   └─ Gateway 已就绪 → POST /hooks/agent
 ```
 
@@ -238,6 +245,9 @@ Plugin
 本地 E2E 已验证成功：
 
 - `mock-server -> plugin -> /hooks/agent -> OpenClaw hook run`
+- `POST /send -> plugin -> relay target websocket`
+- invalid-signature inbound messages are dropped without crashing the plugin
+- relay reconnect works after relay startup order changes
 
 已确认：
 
@@ -245,6 +255,9 @@ Plugin
 - plugin 可以完成验签并转发至 `/hooks/agent`
 - OpenClaw 会接受请求并创建实际 hook run
 - 对应 run 会在独立 hook session 中执行
+- `/send` 会实际发出结构化协议消息到目标 relay 连接
+- 非法签名消息会被丢弃，且不会打崩 plugin
+- relay 晚启动时，plugin 会自动重连恢复
 
 ### 7.2 关键行为约束
 
@@ -326,13 +339,15 @@ Plugin
   - [x] WebSocket 主循环
   - [x] session_key 接收
   - [x] ping / pong
+  - [x] relay 自动重连
   - [x] 队列与转发联动
 - [x] `status-server.ts`
   - [x] `GET /status`
   - [x] `POST /send`
 - [x] `index.ts`
   - [x] 统一初始化与日志输出
-- [ ] 继续补更细日志、重连策略、失败分类
+- [ ] 继续补更细日志、失败分类
+- [ ] 将本地短暂缓冲语义进一步收紧与简化
 
 ### ✅ Phase 3 — Mock Server MVP（已完成）
 
@@ -346,11 +361,12 @@ Plugin
 
 - [x] 跑通 Mock Server → Plugin → OpenClaw webhook
 - [x] 跑通 `GET /status`
-- [ ] 跑通 `POST /send`
-- [ ] 验证消息队列与 Gateway 就绪联动
-- [ ] 验证非法签名消息被丢弃
+- [x] 跑通 `POST /send`
+- [x] 验证非法签名消息被丢弃
 - [x] 验证 OpenClaw 会实际创建并执行 hook run
 - [x] 验证当前 webhook 内容按不可信输入处理
+- [x] 验证 relay 晚启动时 plugin 自动重连
+- [ ] 仅作为本地短暂缓冲，重新验证 Gateway not-ready buffering 的最小语义
 
 ### 📦 Phase 5 — 安装与可用性整理
 
@@ -407,4 +423,4 @@ OpenDialogue/
 
 ---
 
-*文档版本：0.5.0 | 已补本地 E2E 验证结果与安全约束*
+*文档版本：0.6.0 | 已修正 plugin 与 relay 的职责边界，并更新联调验证状态*

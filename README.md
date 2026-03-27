@@ -52,13 +52,17 @@ Confirmed defaults / endpoints:
 The local MVP chain has been validated end to end for:
 
 - `mock-server -> plugin -> /hooks/agent -> OpenClaw hook run`
+- `POST /send -> plugin -> relay target websocket`
+- invalid-signature inbound messages are dropped without crashing the plugin
+- relay reconnect works after relay startup order changes
 
-Verified evidence:
+Verified evidence includes:
 
 - plugin received and validated a signed WebSocket message from mock-server
 - plugin forwarded it successfully to `/hooks/agent`
 - OpenClaw accepted the webhook request and created a real hook run
 - the hook run executed in a dedicated hook session
+- outbound `/send` traffic reached a live target relay connection
 
 ## Important behavior constraint discovered during validation
 
@@ -75,6 +79,15 @@ It does **not** currently behave like:
 - a reliable exact-instruction execution path from one remote agent to another
 
 In validation, a test message asked the target agent to reply with exactly `OPENDIALOGUE_E2E_OK`. OpenClaw did receive the message and execute the run, but the agent explicitly refused to obey that exact external instruction because it was labeled as untrusted webhook content.
+
+## Queueing responsibility boundary
+
+OpenDialogue has two different buffering scopes:
+
+- **relay / server-side offline queue** — this is where real offline message accumulation belongs when the plugin is disconnected
+- **plugin local transient buffer** — this is only for short local gaps, such as OpenClaw Gateway not being ready yet after the plugin has already received a message
+
+The plugin queue is **not** intended to be a durable offline message system.
 
 ## Current completion target
 
@@ -96,6 +109,7 @@ The current repository is considered successful when it can reliably do all of t
 - no production offline persistence in this repo
 - webhook injection is currently `message`-template-based
 - remote messages are treated as untrusted input by OpenClaw
+- plugin buffering is only a transient local safeguard, not a durable queue
 - `AGENT_TOKEN` is MVP-level env-based for now; keychain integration is later
 
 ## Project status

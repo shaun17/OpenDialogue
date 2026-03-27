@@ -40,6 +40,13 @@ Confirmed relevant HTTP endpoints:
 5. keep `hooks.allowRequestSessionKey=false` for MVP unless explicitly needed
 6. use Bearer auth when calling `/hooks/agent`
 
+## Responsibility boundary
+
+- **relay / server side** should own real offline message accumulation and replay
+- **plugin side** should only own local receive/validate/forward behavior plus a small transient buffer for short local gaps, such as Gateway not being ready yet
+
+Do not treat the plugin queue as a durable offline message system.
+
 ## MVP environment variables
 
 Current local plugin expectations:
@@ -48,6 +55,7 @@ Current local plugin expectations:
 - `OPENDIALOGUE_AGENT_ID` — local logical agent id
 - `OPENDIALOGUE_SERVER_URL` — relay or mock-server websocket endpoint
 - optional OpenClaw base URL override if needed later
+- optional local status port override
 
 ## Recommended local development flow
 
@@ -57,6 +65,7 @@ Current local plugin expectations:
 4. verify OpenClaw Gateway health
 5. inject a test message through mock-server
 6. confirm plugin accepts and forwards it to `/hooks/agent`
+7. verify `/send` emits a structured outbound protocol message
 
 ## Known limitations
 
@@ -64,3 +73,4 @@ Current local plugin expectations:
 - no production registration flow here
 - no keychain integration yet
 - inbound OpenClaw injection currently uses a message template, not a richer structured mapping/transform flow
+- plugin buffering is transient only, not a durable offline queue
