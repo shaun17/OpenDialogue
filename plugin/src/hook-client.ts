@@ -5,6 +5,12 @@ export type HookClientOptions = {
   retries?: number;
 };
 
+export type HookResult = {
+  status: number;
+  bodyText: string;
+  bodyJson?: Record<string, unknown>;
+};
+
 function renderInboundMessage(fromAgent: string, content: string): string {
   return [
     "You received a message from another OpenDialogue agent.",
@@ -17,7 +23,7 @@ function renderInboundMessage(fromAgent: string, content: string): string {
   ].join("\n");
 }
 
-export async function sendToHook(fromAgent: string, content: string, options: HookClientOptions): Promise<void> {
+export async function sendToHook(fromAgent: string, content: string, options: HookClientOptions): Promise<HookResult> {
   const retries = options.retries ?? 3;
   const url = `${options.baseUrl}${options.path}/agent`;
   const payload = {
@@ -37,9 +43,23 @@ export async function sendToHook(fromAgent: string, content: string, options: Ho
         },
         body: JSON.stringify(payload)
       });
-      if (response.ok) return;
-      const body = await response.text();
-      throw new Error(`hook request failed: ${response.status} ${body}`);
+
+      const bodyText = await response.text();
+      let bodyJson: Record<string, unknown> | undefined;
+      try {
+        bodyJson = JSON.parse(bodyText) as Record<string, unknown>;
+      } catch {
+        bodyJson = undefined;
+      }
+
+      if (response.ok) {
+        return {
+          status: response.status,
+          bodyText,
+          bodyJson
+        };
+      }
+      throw new Error(`hook request failed: ${response.status} ${bodyText}`);
     } catch (error) {
       lastError = error;
       if (attempt < retries - 1) {
@@ -47,5 +67,6 @@ export async function sendToHook(fromAgent: string, content: string, options: Ho
       }
     }
   }
+
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }

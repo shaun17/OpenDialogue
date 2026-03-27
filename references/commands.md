@@ -4,7 +4,7 @@
 
 Use:
 
-- `GET http://127.0.0.1:18791/status`
+- `GET http://127.0.0.1:18791/status` (fallback: `18787`)
 
 Return at least:
 

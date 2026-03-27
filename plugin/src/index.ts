@@ -11,6 +11,10 @@ function log(line: string): void {
   appendFileSync(file, `[${new Date().toISOString()}] ${line}\n`, "utf8");
 }
 
+function short(text: string, max = 160): string {
+  return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
 async function main() {
   const config = ensurePluginConfig();
   const queue = new MessageQueue(100);
@@ -22,20 +26,30 @@ async function main() {
     sessionKey: undefined as string | undefined
   };
 
+  const forwardToHook = async (msg: { id: string; from: string; to: string; content: string }) => {
+    log(`accepted inbound message id=${msg.id} from=${msg.from} to=${msg.to} content=${short(msg.content)}`);
+    try {
+      const result = await sendToHook(msg.from, msg.content, {
+        baseUrl: config.gatewayBaseUrl,
+        token: config.hook.token,
+        path: config.hook.path,
+        retries: 3
+      });
+      const runId = typeof result.bodyJson?.runId === "string" ? result.bodyJson.runId : "unknown";
+      log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId} body=${short(result.bodyText, 240)}`);
+    } catch (error) {
+      log(`hook forward failed id=${msg.id} error=${String(error)}`);
+      throw error;
+    }
+  };
+
   const ws = startDaemon({
     serverUrl: config.relayUrl,
     agentId: config.agentId,
     agentToken: config.agentToken,
     queue,
     state,
-    onAccepted: async (msg) => {
-      await sendToHook(msg.from, msg.content, {
-        baseUrl: config.gatewayBaseUrl,
-        token: config.hook.token,
-        path: config.hook.path,
-        retries: 3
-      });
-    }
+    onAccepted: forwardToHook
   });
 
   startStatusServer(state, () => queue.size(), (payload) => {
@@ -48,12 +62,9 @@ async function main() {
 
   if (state.gatewayReady) {
     await queue.flush(async (msg) => {
-      await sendToHook(msg.from, msg.content, {
-        baseUrl: config.gatewayBaseUrl,
-        token: config.hook.token,
-        path: config.hook.path,
-        retries: 3
-      });
+      log(`flushing queued message id=${msg.id} from=${msg.from}`);
+      await forwardToHook(msg);
+      log(`flush ok id=${msg.id}`);
     });
   }
 }

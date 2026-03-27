@@ -38,7 +38,7 @@ When operating this skill, assume the plugin uses:
 
 ### Status
 
-`GET http://127.0.0.1:18791/status`
+`GET http://127.0.0.1:18791/status` (or `18787` if the default local status port is occupied)
 
 Expected output includes:
 
