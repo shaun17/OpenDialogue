@@ -98,7 +98,7 @@ export function startDaemon(options: DaemonOptions): DaemonHandle {
           options.onEvent?.("relay session key received");
           return;
         }
-        if (data.type === "pong") return;
+        if (data.type === "pong" || data.type === "ping") return;
         if (!options.state.sessionKey) return;
         const message = validateMessage(data, options.state.sessionKey);
         if (options.state.gatewayReady) {
