@@ -39,18 +39,21 @@ export function startStatusServer(state: DaemonState, queueSize: () => number, s
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        if (!body || typeof body.to !== "string" || typeof body.content !== "string" || typeof body.conversation_id !== "string") {
-          return badRequest(res, "body must include string fields: to, content, conversation_id");
+        if (!body || typeof body.to !== "string" || typeof body.content !== "string") {
+          return badRequest(res, "body must include string fields: to, content");
         }
         if (body.turn_number !== undefined && (!Number.isInteger(body.turn_number) || body.turn_number <= 0)) {
           return badRequest(res, "turn_number must be a positive integer when provided");
         }
-        if (!body.conversation_id.trim()) {
-          return badRequest(res, "conversation_id must be non-empty");
+        if (body.conversation_id !== undefined && (typeof body.conversation_id !== "string" || !body.conversation_id.trim())) {
+          return badRequest(res, "conversation_id must be a non-empty string when provided");
         }
         if (body.content.length === 0 || body.content.length > 2000) {
           return badRequest(res, "content length must be 1..2000");
         }
+
+        // 未提供 conversation_id 时自动生成（格式与 message_id 一致：16字节 hex）
+        const conversationId: string = body.conversation_id?.trim() ?? randomBytes(16).toString("hex");
 
         const timestamp = Date.now();
         const nonce = randomBytes(16).toString("hex");
@@ -60,7 +63,7 @@ export function startStatusServer(state: DaemonState, queueSize: () => number, s
           to: body.to,
           type: "text",
           content: body.content,
-          conversation_id: body.conversation_id.trim(),
+          conversation_id: conversationId,
           ...(body.turn_number === undefined ? {} : { turn_number: body.turn_number }),
           timestamp,
           nonce,

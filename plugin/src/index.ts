@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { ensurePluginConfig, getOpenClawConfigPath, saveAgentId } from "./config";
+import { ensurePluginConfig, getOpenClawConfigPath, saveAgentCredentials } from "./config";
 import { ConversationTracker } from "./conversation-tracker";
 import { startDaemon } from "./daemon";
 import { waitForGateway } from "./gateway-probe";
@@ -30,9 +30,10 @@ async function main() {
         body: JSON.stringify({ name: "openclaw-agent" }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { agent_id } = await res.json() as { agent_id: string };
-      saveAgentId(agent_id);
+      const { agent_id, agent_secret } = await res.json() as { agent_id: string; agent_secret: string };
+      saveAgentCredentials(agent_id, agent_secret);
       config.agentId = agent_id;
+      config.agentToken = agent_secret;
       log(`registered agentId=${agent_id}`);
     } catch (error) {
       log(`fatal: agent registration failed error=${String(error)}`);

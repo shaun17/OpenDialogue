@@ -61,14 +61,16 @@ export function ensurePluginConfig(): PluginConfig {
 
   atomicWriteJson(openclawPath, data);
 
-  const agentToken = process.env.OPENDIALOGUE_AGENT_TOKEN ?? "dev-agent-token";
   const relayUrl = process.env.OPENDIALOGUE_SERVER_URL ?? "ws://127.0.0.1:19000/connect";
   const httpServerUrl = relayUrl.replace(/^wss/, 'https').replace(/^ws/, 'http').replace(/\/connect$/, '');
 
-  // 优先使用环境变量，其次使用 openclaw.json 中持久化的 agentId
+  // 优先使用环境变量，其次使用 openclaw.json 中持久化的凭据
   const opendialogue = typeof data.opendialogue === 'object' && data.opendialogue !== null ? data.opendialogue as Record<string, unknown> : {};
   const persistedAgentId = typeof opendialogue.agentId === 'string' ? opendialogue.agentId : undefined;
+  const persistedAgentSecret = typeof opendialogue.agentSecret === 'string' ? opendialogue.agentSecret : undefined;
   const agentId = process.env.OPENDIALOGUE_AGENT_ID ?? persistedAgentId ?? "";
+  // agentSecret 用于连接签名，优先环境变量，其次持久化值，最后 fallback 到旧 agentToken（向后兼容）
+  const agentSecret = process.env.OPENDIALOGUE_AGENT_SECRET ?? persistedAgentSecret ?? process.env.OPENDIALOGUE_AGENT_TOKEN ?? "dev-agent-token";
 
   return {
     hook: {
@@ -81,7 +83,7 @@ export function ensurePluginConfig(): PluginConfig {
     relayUrl,
     httpServerUrl,
     agentId,
-    agentToken,
+    agentToken: agentSecret,
     turnControl: {
       enforceTurnLimit: parseBoolean(process.env.OPENDIALOGUE_ENFORCE_TURN_LIMIT, false),
       maxTurnsPerConversation: parseNumber(process.env.OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION, 10)
@@ -89,7 +91,7 @@ export function ensurePluginConfig(): PluginConfig {
   };
 }
 
-export function saveAgentId(agentId: string): void {
+export function saveAgentCredentials(agentId: string, agentSecret: string): void {
   const path = getOpenClawConfigPath();
   const raw = readFileSync(path, "utf8");
   const data = JSON.parse(raw) as Record<string, any>;
@@ -97,5 +99,6 @@ export function saveAgentId(agentId: string): void {
     data.opendialogue = {};
   }
   (data.opendialogue as Record<string, unknown>).agentId = agentId;
+  (data.opendialogue as Record<string, unknown>).agentSecret = agentSecret;
   atomicWriteJson(path, data);
 }
