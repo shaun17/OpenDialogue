@@ -39,6 +39,10 @@ Confirmed relevant HTTP endpoints:
 4. set `hooks.path` to `/hooks` when absent
 5. keep `hooks.allowRequestSessionKey=false` for MVP unless explicitly needed
 6. use Bearer auth when calling `/hooks/agent`
+7. normalize inbound content before validation / forwarding
+8. apply sender-side rate limiting in the receive path
+9. attach basic inbound security metadata when forwarding
+10. optionally enforce conversation turn limits when enabled
 
 ## Responsibility boundary
 
@@ -66,6 +70,23 @@ Current local plugin expectations:
 5. inject a test message through mock-server
 6. confirm plugin accepts and forwards it to `/hooks/agent`
 7. verify `/send` emits a structured outbound protocol message
+
+## Current forwarded metadata
+
+Current plugin -> OpenClaw webhook forwarding adds these metadata fields:
+
+- `from_agent_id`
+- `has_urls`
+- `urls`
+- `content_length`
+- `conversation_id`
+- `turn_number` (when provided upstream)
+- `trust_level` (`unknown` by default)
+
+Protocol note:
+
+- `conversation_id` is now required for inbound and outbound plugin messages
+- `turn_number` is optional and may be provided by the caller
 
 ## Known limitations
 

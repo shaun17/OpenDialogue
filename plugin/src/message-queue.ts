@@ -4,6 +4,8 @@ export type IncomingMessage = {
   to: string;
   type: string;
   content: string;
+  conversation_id: string;
+  turn_number?: number;
   timestamp: number;
   nonce: string;
   signature: string;

@@ -32,21 +32,24 @@ Plugin 接收层的安全校验分为两类：
 ### 1.2 待新增项
 
 #### T1 - 发送方频率限制（Rate Limiter）
-- **文件**: 新建 `src/rate-limiter.ts`，在 `daemon.ts` 中调用
+- **状态**: 已完成（基础版）
+- **文件**: `src/rate-limiter.ts`，由 `index.ts` 在转发前调用
 - **规则**: 同一 `from` 的消息在滑动窗口内不得超过阈值
-  - 建议默认：每 60 秒最多 30 条
-  - 超限行为：丢弃消息，日志告警，不断开连接（断连是 Server 的职责）
+  - 当前实现：每 60 秒最多 30 条
+  - 超限行为：丢弃消息，记录日志，不断开连接
 - **数据结构**: `Map<agentId, timestamp[]>` 滑动窗口计数
 
 #### T2 - URL 检测与标记
+- **状态**: 已完成（基础版）
 - **文件**: `src/security.ts` 新增 `detectUrls(content: string): string[]`
 - **规则**: 使用正则提取消息中所有 URL（http/https/ftp/data URI）
 - **行为**:
-  - **不拦截**，但在传递给 hook-client 时附加标记 `has_urls: true`
+  - **不拦截**，但在传递给 hook-client 时附加 `has_urls`
   - 将提取到的 URL 列表附加到消息元数据中
 - **原因**: 是否打开 URL 是语义决策，代码只负责发现和标记
 
 #### T3 - 内容编码归一化
+- **状态**: 已完成（基础版）
 - **文件**: `src/security.ts` 新增 `sanitizeContent(content: string): string`
 - **规则**:
   - Unicode 归一化（NFC）
@@ -55,33 +58,42 @@ Plugin 接收层的安全校验分为两类：
 - **原因**: 攻击者可用不可见字符隐藏恶意指令，绕过 prompt 的语义识别
 
 #### T4 - 会话级消息计数器
-- **文件**: `src/conversation-tracker.ts`（新建）
+- **状态**: 已完成（基础版）
+- **文件**: `src/conversation-tracker.ts`
 - **规则**:
   - 追踪每个 `conversation_id` 的消息轮次
-  - 当 `current_turn >= max_turns` 时拒绝该会话的后续消息
-  - 若消息不含 `conversation_id`，视为单轮消息，无需追踪
+  - 当 `current_turn > max_turns` 时拒绝该会话的后续消息
+  - `conversation_id` 为协议必填字段；缺失即视为无效消息并丢弃
+  - `turn_number` 为可选输入字段；未提供时由 plugin 按会话本地递增
+- **配置**:
+  - `OPENDIALOGUE_ENFORCE_TURN_LIMIT`
+  - `OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION`
 - **与 Server 关系**: Server 也会做会话计数，Plugin 侧作为兜底二次校验
 
 #### T5 - 消息元数据增强
-- **文件**: 修改 `src/hook-client.ts` 的 `sendToHook()`
+- **状态**: 已完成（基础版）
+- **文件**: 已修改 `src/hook-client.ts` 的 `sendToHook()`
 - **目标**: 在发送给 OpenClaw 的 webhook payload 中附加安全元数据
-- **新增字段**:
+- **当前已实现字段**:
   ```typescript
   {
-    message: string,              // 现有
-    name: string,                 // 现有
-    wakeMode: string,             // 现有
+    message: string,
+    name: string,
+    wakeMode: string,
     metadata: {
-      from_agent_id: string,      // 发送方 ID
-      has_urls: boolean,          // 是否包含 URL
-      urls: string[],             // 提取到的 URL 列表
-      content_length: number,     // 原始内容长度
-      conversation_id?: string,   // 会话 ID（如有）
-      turn_number?: number,       // 当前轮次（如有）
-      trust_level: "unknown" | "known" | "blocked"  // 来源信任等级
+      from_agent_id: string,
+      has_urls: boolean,
+      urls: string[],
+      content_length: number,
+      conversation_id: string,
+      turn_number?: number,
+      trust_level: "unknown" | "known" | "blocked"
     }
   }
   ```
+- **说明**:
+  - `conversation_id` 为协议必填
+  - `turn_number` 为可选输入字段
 
 #### T6 - 来源信任等级管理
 - **文件**: 新建 `src/trust-store.ts`
@@ -207,16 +219,16 @@ Plugin 接收层的安全校验分为两类：
 | 优先级 | 任务 | 类型 | 预估工作量 |
 |--------|------|------|-----------|
 | P0 | T3 编码归一化 | TS | 小 — 纯函数，易测试 |
-| P0 | P1 消息不可作为指令 | Prompt | 小 — 修改 SKILL.md |
-| P0 | P2 URL 不自动打开 | Prompt | 小 — 修改 SKILL.md |
+| P0 | P1 消息不可作为指令 | Prompt | 已完成 — 已落地到 SKILL.md |
+| P0 | P2 URL 不自动打开 | Prompt | 已完成 — 已落地到 SKILL.md |
 | P1 | T1 频率限制 | TS | 中 — 需要滑动窗口实现 |
 | P1 | T2 URL 检测标记 | TS | 小 — 正则 + metadata |
 | P1 | T5 消息元数据增强 | TS | 中 — 修改 hook-client 接口 |
-| P1 | P3 token 消耗保护 | Prompt | 小 — 修改 SKILL.md |
+| P1 | P3 token 消耗保护 | Prompt | 已完成 — 已落地到 SKILL.md |
 | P2 | T6 信任等级管理 | TS | 中 — 需持久化 + API |
 | P2 | T4 会话计数器 | TS | 中 — 需等 Server 会话协议确定 |
-| P2 | P4 会话终止意识 | Prompt | 小 — 修改 SKILL.md |
-| P2 | P5 身份伪装防御 | Prompt | 小 — 修改 SKILL.md |
+| P2 | P4 会话终止意识 | Prompt | 已完成 — 已落地到 SKILL.md |
+| P2 | P5 身份伪装防御 | Prompt | 已完成 — 已落地到 SKILL.md |
 
 ---
 

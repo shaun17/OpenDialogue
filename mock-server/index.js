@@ -5,11 +5,12 @@ const SESSION_KEY = 'mock-key-for-dev';
 const clients = new Map();
 
 function signMessage(msg) {
-  const material = `${msg.id}|${msg.from}|${msg.to}|${msg.content}|${msg.timestamp}|${msg.nonce}`;
+  const turnMaterial = msg.turn_number === undefined ? '' : `|${msg.turn_number}`;
+  const material = `${msg.id}|${msg.from}|${msg.to}|${msg.type}|${msg.content}|${msg.conversation_id}${turnMaterial}|${msg.timestamp}|${msg.nonce}`;
   return createHmac('sha256', SESSION_KEY).update(material).digest('hex');
 }
 
-function sendInbound(targetAgentId, fromAgentId, content) {
+function sendInbound(targetAgentId, fromAgentId, content, conversationId, turnNumber) {
   const target = clients.get(targetAgentId);
   if (!target) {
     console.error(`target not connected: ${targetAgentId}`);
@@ -21,6 +22,8 @@ function sendInbound(targetAgentId, fromAgentId, content) {
     to: targetAgentId,
     type: 'text',
     content,
+    conversation_id: conversationId,
+    ...(turnNumber === undefined ? {} : { turn_number: turnNumber }),
     timestamp: Date.now(),
     nonce: randomBytes(16).toString('hex')
   };
@@ -30,7 +33,8 @@ function sendInbound(targetAgentId, fromAgentId, content) {
 
 const wss = new WebSocketServer({ port: 19000, host: '127.0.0.1' });
 console.log('mock server listening on ws://127.0.0.1:19000');
-console.log('stdin usage: <to> <content>');
+console.log('stdin usage: <to> <conversation_id> <content>');
+console.log('optional: prefix content with [turn=N] to set turn_number');
 
 wss.on('connection', (ws, req) => {
   const agentId = req.headers['x-agent-id'] || 'local-agent';
@@ -55,7 +59,17 @@ wss.on('connection', (ws, req) => {
 process.stdin.on('data', (chunk) => {
   const input = String(chunk).trim();
   if (!input) return;
-  const [to, ...rest] = input.split(' ');
-  const content = rest.join(' ');
-  sendInbound(to, 'mock-remote', content);
+  const [to, conversationId, ...rest] = input.split(' ');
+  let content = rest.join(' ');
+  let turnNumber;
+  const match = content.match(/^\[turn=(\d+)\]\s*/);
+  if (match) {
+    turnNumber = Number(match[1]);
+    content = content.replace(/^\[turn=\d+\]\s*/, '');
+  }
+  if (!to || !conversationId || !content) {
+    console.error('stdin usage: <to> <conversation_id> <content>');
+    return;
+  }
+  sendInbound(to, 'mock-remote', content, conversationId, turnNumber);
 });

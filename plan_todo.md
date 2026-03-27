@@ -173,6 +173,10 @@ MVP 阶段保留以下校验：
 - type 白名单：`text`, `typing`, `read_receipt`
 - content 长度限制：≤ 2000
 - 控制字符过滤
+- 内容归一化（NFC）
+- 去除零宽字符与方向控制字符
+- 发送方频率限制（当前默认：每 60 秒最多 30 条）
+- URL 检测与 metadata 标记
 
 ### 5.3 Prompt Injection 防护策略（MVP）
 
@@ -348,6 +352,10 @@ Plugin
   - [x] 统一初始化与日志输出
 - [ ] 继续补更细日志、失败分类
 - [ ] 将本地短暂缓冲语义进一步收紧与简化
+- [x] 增加内容归一化（NFC + 零宽/方向控制字符清理）
+- [x] 增加发送方频率限制（基础版）
+- [x] 增加 URL 检测与 metadata 标记（基础版）
+- [x] 增加 webhook metadata 基础增强
 
 ### ✅ Phase 3 — Mock Server MVP（已完成）
 

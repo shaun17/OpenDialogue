@@ -1,3 +1,5 @@
+import { detectUrls } from "./security";
+
 export type HookClientOptions = {
   baseUrl: string;
   token: string;
@@ -11,10 +13,27 @@ export type HookResult = {
   bodyJson?: Record<string, unknown>;
 };
 
-function renderInboundMessage(fromAgent: string, content: string): string {
+export type HookMessageMetadata = {
+  from_agent_id: string;
+  has_urls: boolean;
+  urls: string[];
+  content_length: number;
+  conversation_id: string;
+  turn_number?: number;
+  trust_level: "unknown" | "known" | "blocked";
+};
+
+export type HookMessageMetadataInput = {
+  conversation_id: string;
+  turn_number?: number;
+  trust_level?: "unknown" | "known" | "blocked";
+};
+
+function renderInboundMessage(fromAgent: string, content: string, conversationId: string): string {
   return [
     "You received a message from another OpenDialogue agent.",
     `From: ${fromAgent}`,
+    `Conversation: ${conversationId}`,
     "Type: text",
     "Content:",
     content,
@@ -23,13 +42,28 @@ function renderInboundMessage(fromAgent: string, content: string): string {
   ].join("\n");
 }
 
-export async function sendToHook(fromAgent: string, content: string, options: HookClientOptions): Promise<HookResult> {
+export async function sendToHook(
+  fromAgent: string,
+  content: string,
+  options: HookClientOptions,
+  metadata: HookMessageMetadataInput
+): Promise<HookResult> {
   const retries = options.retries ?? 3;
   const url = `${options.baseUrl}${options.path}/agent`;
+  const urls = detectUrls(content);
   const payload = {
-    message: renderInboundMessage(fromAgent, content),
+    message: renderInboundMessage(fromAgent, content, metadata.conversation_id),
     name: "OpenDialogue",
-    wakeMode: "now"
+    wakeMode: "now",
+    metadata: {
+      from_agent_id: fromAgent,
+      has_urls: urls.length > 0,
+      urls,
+      content_length: content.length,
+      conversation_id: metadata.conversation_id,
+      trust_level: metadata.trust_level ?? "unknown",
+      ...(metadata.turn_number === undefined ? {} : { turn_number: metadata.turn_number })
+    } satisfies HookMessageMetadata
   };
 
   let lastError: unknown;

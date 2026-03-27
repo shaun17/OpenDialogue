@@ -1,9 +1,11 @@
 import { appendFileSync } from "node:fs";
 import { ensurePluginConfig, getOpenClawConfigPath } from "./config";
+import { ConversationTracker } from "./conversation-tracker";
 import { startDaemon } from "./daemon";
 import { waitForGateway } from "./gateway-probe";
 import { sendToHook } from "./hook-client";
 import { MessageQueue } from "./message-queue";
+import { RateLimiter } from "./rate-limiter";
 import { startStatusServer } from "./status-server";
 
 function log(line: string): void {
@@ -18,6 +20,8 @@ function short(text: string, max = 160): string {
 async function main() {
   const config = ensurePluginConfig();
   const queue = new MessageQueue(100);
+  const rateLimiter = new RateLimiter(30, 60_000);
+  const conversationTracker = new ConversationTracker(config.turnControl.maxTurnsPerConversation);
   const state = {
     connected: false,
     serverUrl: config.relayUrl,
@@ -27,15 +31,35 @@ async function main() {
     lastError: undefined as string | undefined
   };
 
-  const forwardToHook = async (msg: { id: string; from: string; to: string; content: string }) => {
-    log(`accepted inbound message id=${msg.id} from=${msg.from} to=${msg.to} content=${short(msg.content)}`);
+  const forwardToHook = async (msg: { id: string; from: string; to: string; content: string; conversation_id: string; turn_number?: number; timestamp: number }) => {
+    if (!rateLimiter.allow(msg.from, msg.timestamp ?? Date.now())) {
+      log(`dropped inbound message reason=rate_limit_exceeded id=${msg.id} from=${msg.from}`);
+      return;
+    }
+
+    const turnCheck = conversationTracker.accept(msg.conversation_id, msg.turn_number, msg.timestamp ?? Date.now());
+    if (config.turnControl.enforceTurnLimit && !turnCheck.allowed) {
+      log(`dropped inbound message reason=${turnCheck.reason} id=${msg.id} from=${msg.from} conversation_id=${msg.conversation_id} turn=${turnCheck.effectiveTurn} maxTurns=${config.turnControl.maxTurnsPerConversation}`);
+      return;
+    }
+
+    log(`accepted inbound message id=${msg.id} from=${msg.from} to=${msg.to} conversation_id=${msg.conversation_id} turn=${turnCheck.effectiveTurn} content=${short(msg.content)}`);
     try {
-      const result = await sendToHook(msg.from, msg.content, {
-        baseUrl: config.gatewayBaseUrl,
-        token: config.hook.token,
-        path: config.hook.path,
-        retries: 3
-      });
+      const result = await sendToHook(
+        msg.from,
+        msg.content,
+        {
+          baseUrl: config.gatewayBaseUrl,
+          token: config.hook.token,
+          path: config.hook.path,
+          retries: 3
+        },
+        {
+          conversation_id: msg.conversation_id,
+          turn_number: turnCheck.effectiveTurn,
+          trust_level: "unknown"
+        }
+      );
       const runId = typeof result.bodyJson?.runId === "string" ? result.bodyJson.runId : "unknown";
       log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId} body=${short(result.bodyText, 240)}`);
     } catch (error) {
@@ -72,6 +96,9 @@ async function main() {
     log(`outbound send requested payload=${short(String(payload), 240)}`);
     const sent = daemon.send(payload);
     log(`outbound ws send attempted sent=${sent}`);
+  }, {
+    enforceTurnLimit: config.turnControl.enforceTurnLimit,
+    maxTurnsPerConversation: config.turnControl.maxTurnsPerConversation
   });
 
   log(`plugin boot: relay=${config.relayUrl} agent=${config.agentId}`);

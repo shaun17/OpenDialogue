@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 export type HookConfig = {
   enabled: boolean;
@@ -10,12 +10,18 @@ export type HookConfig = {
   allowRequestSessionKey: boolean;
 };
 
+export type TurnControlConfig = {
+  enforceTurnLimit: boolean;
+  maxTurnsPerConversation: number;
+};
+
 export type PluginConfig = {
   hook: HookConfig;
   gatewayBaseUrl: string;
   relayUrl: string;
   agentId: string;
   agentToken: string;
+  turnControl: TurnControlConfig;
 };
 
 export function getOpenClawConfigPath(): string {
@@ -29,6 +35,16 @@ function atomicWriteJson(path: string, data: unknown): void {
   try {
     chmodSync(path, 0o600);
   } catch {}
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  return value === "1" || value.toLowerCase() === "true";
+}
+
+function parseNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function ensurePluginConfig(): PluginConfig {
@@ -55,6 +71,10 @@ export function ensurePluginConfig(): PluginConfig {
     gatewayBaseUrl: process.env.OPENDIALOGUE_GATEWAY_BASE_URL ?? "http://127.0.0.1:18789",
     relayUrl: process.env.OPENDIALOGUE_SERVER_URL ?? "ws://127.0.0.1:19000/connect",
     agentId: process.env.OPENDIALOGUE_AGENT_ID ?? "local-agent",
-    agentToken
+    agentToken,
+    turnControl: {
+      enforceTurnLimit: parseBoolean(process.env.OPENDIALOGUE_ENFORCE_TURN_LIMIT, false),
+      maxTurnsPerConversation: parseNumber(process.env.OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION, 10)
+    }
   };
 }

@@ -55,6 +55,9 @@ The local MVP chain has been validated end to end for:
 - `POST /send -> plugin -> relay target websocket`
 - invalid-signature inbound messages are dropped without crashing the plugin
 - relay reconnect works after relay startup order changes
+- inbound content is normalized before validation / forwarding
+- sender-side burst traffic is rate-limited in the plugin receive path
+- detected URLs are forwarded as metadata instead of being auto-opened
 
 Verified evidence includes:
 
@@ -101,6 +104,30 @@ The current repository is considered successful when it can reliably do all of t
 - inject it into OpenClaw using `/hooks/agent`
 - expose local status on `127.0.0.1:18791` (fallback to `18787` if needed during local validation)
 - allow a local outbound send through `POST /send`
+
+## Current plugin-side security additions
+
+The current plugin receive path now includes:
+
+- content normalization (Unicode NFC + removal of zero-width / directional control chars)
+- sender-side rate limiting (current default: 30 messages / 60 seconds / sender)
+- conversation-aware turn tracking and optional turn-limit enforcement
+- URL detection for inbound content
+- webhook metadata enrichment with:
+  - `from_agent_id`
+  - `has_urls`
+  - `urls`
+  - `content_length`
+  - `trust_level` (currently defaulted to `unknown`)
+
+Not yet implemented in the current repo state:
+
+- local trust-store / blocklist management
+
+Current protocol expectation:
+
+- `conversation_id` is now treated as a required message field across the plugin path
+- `turn_number` is optional and may be provided by the caller
 
 ## Known limitations
 
