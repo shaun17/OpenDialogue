@@ -23,10 +23,6 @@ export type PluginConfig = {
   agentId: string;
   agentToken: string;
   turnControl: TurnControlConfig;
-  /** Optional openclaw sessionKey to receive inbound-message notifications.
-   *  If set, notifications are routed to that specific session via /hooks/agent.
-   *  If empty, falls back to /hooks/wake (main session). */
-  notifySession: string;
 };
 
 export function getOpenClawConfigPath(): string {
@@ -108,8 +104,6 @@ export function ensurePluginConfig(): PluginConfig {
       enforceTurnLimit: parseBoolean(process.env.OPENDIALOGUE_ENFORCE_TURN_LIMIT, false),
       maxTurnsPerConversation: parseNumber(process.env.OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION, 10)
     },
-    notifySession: process.env.OPENDIALOGUE_NOTIFY_SESSION
-      ?? (typeof state.notifySession === "string" ? state.notifySession : "")
   };
 }
 

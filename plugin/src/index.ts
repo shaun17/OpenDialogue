@@ -75,7 +75,7 @@ async function main() {
     log(`accepted inbound message id=${msg.id} from=${msg.from} to=${msg.to} conversation_id=${msg.conversation_id} turn=${turnCheck.effectiveTurn} content=${short(msg.content)}`);
     // Keep the conversation map in sync with inbound conversation IDs so that
     // outbound replies to this peer always reuse the same session.
-    conversationMap.set(msg.from, msg.conversation_id);
+    conversationMap.setConversationId(msg.from, msg.conversation_id);
     try {
       const result = await sendToHook(
         msg.from,
@@ -96,20 +96,22 @@ async function main() {
       log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId}`);
 
       // Notify the user's openclaw session about the inbound message.
-      // If notifySession is configured, route to that specific session via /hooks/agent.
-      // Otherwise fall back to /hooks/wake which targets the main session.
+      // If this peer has a replySession (set via /send's reply_session field),
+      // route to that specific session. Otherwise fall back to /hooks/wake (main session).
+      const replySession = conversationMap.getReplySession(msg.from);
       try {
-        if (config.notifySession) {
+        if (replySession) {
           await fetch(`${config.gatewayBaseUrl}${config.hook.path}/agent`, {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${config.hook.token}` },
             body: JSON.stringify({
-              message: `[OpenDialogue] Agent ${msg.from} sent you a message (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
+              message: `[OpenDialogue] Agent ${msg.from} replied (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
               name: "OpenDialogue",
-              sessionKey: config.notifySession,
+              sessionKey: replySession,
               wakeMode: "now"
             })
           });
+          log(`notify routed to replySession=${replySession} for peer=${msg.from}`);
         } else {
           await fetch(`${config.gatewayBaseUrl}${config.hook.path}/wake`, {
             method: "POST",

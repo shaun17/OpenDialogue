@@ -54,7 +54,12 @@ export function startStatusServer(state: DaemonState, queueSize: () => number, s
         }
 
         // 未提供 conversation_id 时，从持久化 map 中取与该 peer 对应的 id（首次自动生成并保存）
-        const conversationId: string = body.conversation_id?.trim() ?? conversationMap.getOrCreate(body.to);
+        const conversationId: string = body.conversation_id?.trim() ?? conversationMap.getOrCreateConversationId(body.to);
+
+        // reply_session: caller tells plugin which openclaw session to notify when this peer replies
+        if (typeof body.reply_session === "string" && body.reply_session.trim()) {
+          conversationMap.setReplySession(body.to, body.reply_session.trim());
+        }
 
         const timestamp = Date.now();
         const nonce = randomBytes(16).toString("hex");

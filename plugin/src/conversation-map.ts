@@ -1,44 +1,83 @@
 import { randomBytes } from "node:crypto";
 import { atomicWriteJson, getStateFilePath, readStateFile } from "./config";
 
+export type PeerEntry = {
+  conversationId: string;
+  replySession?: string;
+};
+
 /**
- * Persistent per-peer conversation ID map, stored under the "conversations"
- * key inside ~/.openclaw/opendialogue-state.json alongside agentId/agentSecret.
+ * Persistent per-peer conversation state, stored under the "conversations"
+ * key inside ~/.openclaw/opendialogue-state.json.
  *
- * Maps each remote agent ID to a stable conversation_id so that all messages
- * exchanged with a given peer share the same openclaw session
- * (sessionKey = `opendialogue:<conversation_id>`).
+ * Each peer maps to:
+ *   - conversationId: stable ID shared with the peer for openclaw sessionKey
+ *   - replySession:   (optional) the local openclaw session to notify when
+ *                     this peer sends a message back
  */
 export class ConversationMap {
-  private data: Record<string, string>;
+  private data: Record<string, PeerEntry>;
 
   constructor() {
     const state = readStateFile();
-    this.data = (typeof state.conversations === "object" && state.conversations !== null)
-      ? (state.conversations as Record<string, string>)
-      : {};
+    const raw = state.conversations;
+    if (typeof raw === "object" && raw !== null) {
+      // Support migration from old format (Record<string, string>)
+      const entries: Record<string, PeerEntry> = {};
+      for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof val === "string") {
+          entries[key] = { conversationId: val };
+        } else if (typeof val === "object" && val !== null && "conversationId" in val) {
+          entries[key] = val as PeerEntry;
+        }
+      }
+      this.data = entries;
+    } else {
+      this.data = {};
+    }
   }
 
-  get(peerId: string): string | undefined {
+  getEntry(peerId: string): PeerEntry | undefined {
     return this.data[peerId];
   }
 
-  /** Returns the existing conversation_id for this peer, or creates and persists a new one. */
-  getOrCreate(peerId: string): string {
+  getConversationId(peerId: string): string | undefined {
+    return this.data[peerId]?.conversationId;
+  }
+
+  getReplySession(peerId: string): string | undefined {
+    return this.data[peerId]?.replySession;
+  }
+
+  /** Returns the existing conversationId for this peer, or creates and persists a new one. */
+  getOrCreateConversationId(peerId: string): string {
     if (!this.data[peerId]) {
-      this.data[peerId] = randomBytes(16).toString("hex");
+      this.data[peerId] = { conversationId: randomBytes(16).toString("hex") };
       this.persist();
     }
-    return this.data[peerId];
+    return this.data[peerId].conversationId;
   }
 
-  /**
-   * Records the conversation_id from an inbound message.
-   * If it differs from what we have, updates and persists so both sides stay in sync.
-   */
-  set(peerId: string, conversationId: string): void {
-    if (this.data[peerId] !== conversationId) {
-      this.data[peerId] = conversationId;
+  /** Updates conversationId from an inbound message so both sides stay in sync. */
+  setConversationId(peerId: string, conversationId: string): void {
+    const entry = this.data[peerId];
+    if (!entry) {
+      this.data[peerId] = { conversationId };
+      this.persist();
+    } else if (entry.conversationId !== conversationId) {
+      entry.conversationId = conversationId;
+      this.persist();
+    }
+  }
+
+  /** Records the replySession for a peer (set when /send is called with reply_session). */
+  setReplySession(peerId: string, replySession: string): void {
+    const entry = this.data[peerId];
+    if (!entry) {
+      this.data[peerId] = { conversationId: randomBytes(16).toString("hex"), replySession };
+      this.persist();
+    } else if (entry.replySession !== replySession) {
+      entry.replySession = replySession;
       this.persist();
     }
   }
