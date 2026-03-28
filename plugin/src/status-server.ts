@@ -2,13 +2,9 @@ import { createHmac, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { DaemonState } from "./daemon";
 import type { ConversationMap } from "./conversation-map";
+import { readStateFile } from "./config";
 
 type SendFn = (payload: string) => void;
-
-type StatusExtras = {
-  enforceTurnLimit: boolean;
-  maxTurnsPerConversation: number;
-};
 
 function badRequest(res: import("node:http").ServerResponse, message: string): void {
   res.statusCode = 400;
@@ -16,10 +12,12 @@ function badRequest(res: import("node:http").ServerResponse, message: string): v
   res.end(JSON.stringify({ error: message }));
 }
 
-export function startStatusServer(state: DaemonState, queueSize: () => number, send: SendFn, extras: StatusExtras, conversationMap: ConversationMap) {
+export function startStatusServer(state: DaemonState, queueSize: () => number, send: SendFn, conversationMap: ConversationMap) {
   const startedAt = Date.now();
   const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/status") {
+      const stateFile = readStateFile();
+      const maxTurns = typeof stateFile.maxTurnsPerConversation === "number" ? stateFile.maxTurnsPerConversation : 20;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({
         connected: state.connected,
@@ -28,8 +26,7 @@ export function startStatusServer(state: DaemonState, queueSize: () => number, s
         queue_size: queueSize(),
         gateway_ready: state.gatewayReady,
         uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
-        enforce_turn_limit: extras.enforceTurnLimit,
-        max_turns_per_conversation: extras.maxTurnsPerConversation,
+        max_turns_per_conversation: maxTurns,
         last_error: state.lastError ?? null
       }));
       return;

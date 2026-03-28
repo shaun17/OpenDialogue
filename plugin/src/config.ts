@@ -10,11 +10,6 @@ export type HookConfig = {
   allowRequestSessionKey: boolean;
 };
 
-export type TurnControlConfig = {
-  enforceTurnLimit: boolean;
-  maxTurnsPerConversation: number;
-};
-
 export type PluginConfig = {
   hook: HookConfig;
   gatewayBaseUrl: string;
@@ -22,7 +17,6 @@ export type PluginConfig = {
   httpServerUrl: string;
   agentId: string;
   agentToken: string;
-  turnControl: TurnControlConfig;
 };
 
 export function getOpenClawConfigPath(): string {
@@ -40,16 +34,6 @@ export function atomicWriteJson(path: string, data: unknown): void {
   try {
     chmodSync(path, 0o600);
   } catch {}
-}
-
-function parseBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  return value === "1" || value.toLowerCase() === "true";
-}
-
-function parseNumber(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function readStateFile(): Record<string, unknown> {
@@ -100,10 +84,6 @@ export function ensurePluginConfig(): PluginConfig {
     httpServerUrl,
     agentId,
     agentToken: agentSecret,
-    turnControl: {
-      enforceTurnLimit: parseBoolean(process.env.OPENDIALOGUE_ENFORCE_TURN_LIMIT, true),
-      maxTurnsPerConversation: parseNumber(process.env.OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION, 20)
-    },
   };
 }
 

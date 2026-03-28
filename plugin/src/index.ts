@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ensurePluginConfig, getOpenClawConfigPath, saveAgentCredentials } from "./config";
 import { ConversationMap } from "./conversation-map";
-import { ConversationTracker } from "./conversation-tracker";
+import { ConversationTracker, ensureMaxTurnsInState } from "./conversation-tracker";
 import { startDaemon } from "./daemon";
 import { waitForGateway } from "./gateway-probe";
 import { sendToHook } from "./hook-client";
@@ -50,7 +50,8 @@ async function main() {
   const queue = new MessageQueue(100);
   const rateLimiter = new RateLimiter(30, 60_000);
   const conversationMap = new ConversationMap();
-  const conversationTracker = new ConversationTracker(config.turnControl.maxTurnsPerConversation);
+  ensureMaxTurnsInState(); // write default 20 to state.json if not present
+  const conversationTracker = new ConversationTracker();
   const state = {
     connected: false,
     serverUrl: config.relayUrl,
@@ -67,8 +68,8 @@ async function main() {
     }
 
     const turnCheck = conversationTracker.accept(msg.conversation_id, msg.turn_number, msg.timestamp ?? Date.now());
-    if (config.turnControl.enforceTurnLimit && !turnCheck.allowed) {
-      log(`dropped inbound message reason=${turnCheck.reason} id=${msg.id} from=${msg.from} conversation_id=${msg.conversation_id} turn=${turnCheck.effectiveTurn} maxTurns=${config.turnControl.maxTurnsPerConversation}`);
+    if (!turnCheck.allowed) {
+      log(`dropped inbound message reason=${turnCheck.reason} id=${msg.id} from=${msg.from} conversation_id=${msg.conversation_id} turn=${turnCheck.effectiveTurn}`);
       return;
     }
 
@@ -183,9 +184,6 @@ async function main() {
     log(`outbound send requested payload=${short(String(payload), 240)}`);
     const sent = daemon.send(payload);
     log(`outbound ws send attempted sent=${sent}`);
-  }, {
-    enforceTurnLimit: config.turnControl.enforceTurnLimit,
-    maxTurnsPerConversation: config.turnControl.maxTurnsPerConversation
   }, conversationMap);
 
   log(`plugin boot: relay=${config.relayUrl} agent=${config.agentId}`);
