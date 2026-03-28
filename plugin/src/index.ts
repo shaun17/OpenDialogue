@@ -95,16 +95,31 @@ async function main() {
       const runId = typeof result.bodyJson?.runId === "string" ? result.bodyJson.runId : "unknown";
       log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId}`);
 
-      // Notify the main openclaw session so the user is aware of the inbound message.
+      // Notify the user's openclaw session about the inbound message.
+      // If notifySession is configured, route to that specific session via /hooks/agent.
+      // Otherwise fall back to /hooks/wake which targets the main session.
       try {
-        await fetch(`${config.gatewayBaseUrl}${config.hook.path}/wake`, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${config.hook.token}` },
-          body: JSON.stringify({
-            text: `[OpenDialogue] Agent ${msg.from} sent you a message (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
-            mode: "now"
-          })
-        });
+        if (config.notifySession) {
+          await fetch(`${config.gatewayBaseUrl}${config.hook.path}/agent`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${config.hook.token}` },
+            body: JSON.stringify({
+              message: `[OpenDialogue] Agent ${msg.from} sent you a message (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
+              name: "OpenDialogue",
+              sessionKey: config.notifySession,
+              wakeMode: "now"
+            })
+          });
+        } else {
+          await fetch(`${config.gatewayBaseUrl}${config.hook.path}/wake`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${config.hook.token}` },
+            body: JSON.stringify({
+              text: `[OpenDialogue] Agent ${msg.from} sent you a message (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
+              mode: "now"
+            })
+          });
+        }
       } catch (wakeError) {
         log(`wake notification failed id=${msg.id} error=${String(wakeError)}`);
       }
