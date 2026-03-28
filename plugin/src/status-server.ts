@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { DaemonState } from "./daemon";
+import type { ConversationMap } from "./conversation-map";
 
 type SendFn = (payload: string) => void;
 
@@ -15,7 +16,7 @@ function badRequest(res: import("node:http").ServerResponse, message: string): v
   res.end(JSON.stringify({ error: message }));
 }
 
-export function startStatusServer(state: DaemonState, queueSize: () => number, send: SendFn, extras: StatusExtras) {
+export function startStatusServer(state: DaemonState, queueSize: () => number, send: SendFn, extras: StatusExtras, conversationMap: ConversationMap) {
   const startedAt = Date.now();
   const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/status") {
@@ -52,8 +53,8 @@ export function startStatusServer(state: DaemonState, queueSize: () => number, s
           return badRequest(res, "content length must be 1..2000");
         }
 
-        // 未提供 conversation_id 时自动生成（格式与 message_id 一致：16字节 hex）
-        const conversationId: string = body.conversation_id?.trim() ?? randomBytes(16).toString("hex");
+        // 未提供 conversation_id 时，从持久化 map 中取与该 peer 对应的 id（首次自动生成并保存）
+        const conversationId: string = body.conversation_id?.trim() ?? conversationMap.getOrCreate(body.to);
 
         const timestamp = Date.now();
         const nonce = randomBytes(16).toString("hex");

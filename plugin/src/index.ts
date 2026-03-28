@@ -2,6 +2,7 @@ import { appendFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ensurePluginConfig, getOpenClawConfigPath, saveAgentCredentials } from "./config";
+import { ConversationMap } from "./conversation-map";
 import { ConversationTracker } from "./conversation-tracker";
 import { startDaemon } from "./daemon";
 import { waitForGateway } from "./gateway-probe";
@@ -48,6 +49,7 @@ async function main() {
 
   const queue = new MessageQueue(100);
   const rateLimiter = new RateLimiter(30, 60_000);
+  const conversationMap = new ConversationMap();
   const conversationTracker = new ConversationTracker(config.turnControl.maxTurnsPerConversation);
   const state = {
     connected: false,
@@ -71,6 +73,9 @@ async function main() {
     }
 
     log(`accepted inbound message id=${msg.id} from=${msg.from} to=${msg.to} conversation_id=${msg.conversation_id} turn=${turnCheck.effectiveTurn} content=${short(msg.content)}`);
+    // Keep the conversation map in sync with inbound conversation IDs so that
+    // outbound replies to this peer always reuse the same session.
+    conversationMap.set(msg.from, msg.conversation_id);
     try {
       const result = await sendToHook(
         msg.from,
@@ -150,7 +155,7 @@ async function main() {
   }, {
     enforceTurnLimit: config.turnControl.enforceTurnLimit,
     maxTurnsPerConversation: config.turnControl.maxTurnsPerConversation
-  });
+  }, conversationMap);
 
   log(`plugin boot: relay=${config.relayUrl} agent=${config.agentId}`);
   state.gatewayReady = await waitForGateway(config.gatewayBaseUrl);
