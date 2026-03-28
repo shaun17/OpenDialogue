@@ -51,9 +51,14 @@ export async function sendToHook(
   const retries = options.retries ?? 3;
   const url = `${options.baseUrl}${options.path}/agent`;
   const urls = detectUrls(content);
+  // sessionKey ties all turns of the same conversation to a single openclaw session,
+  // giving the LLM persistent memory across multiple messages in the same conversation.
+  // Full conversation history (all turns, all participants) is available via the server:
+  //   GET <httpServerUrl>/api/conversation/<conversation_id>/history?last=N
   const payload = {
     message: renderInboundMessage(fromAgent, content, metadata.conversation_id),
     name: "OpenDialogue",
+    sessionKey: `opendialogue:${metadata.conversation_id}`,
     wakeMode: "now",
     metadata: {
       from_agent_id: fromAgent,
