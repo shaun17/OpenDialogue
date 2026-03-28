@@ -1,4 +1,6 @@
 import { appendFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ensurePluginConfig, getOpenClawConfigPath, saveAgentCredentials } from "./config";
 import { ConversationTracker } from "./conversation-tracker";
 import { startDaemon } from "./daemon";
@@ -7,6 +9,8 @@ import { sendToHook } from "./hook-client";
 import { MessageQueue } from "./message-queue";
 import { RateLimiter } from "./rate-limiter";
 import { startStatusServer } from "./status-server";
+
+const execFileAsync = promisify(execFile);
 
 function log(line: string): void {
   const file = `${getOpenClawConfigPath()}.opendialogue.log`;
@@ -84,7 +88,31 @@ async function main() {
         }
       );
       const runId = typeof result.bodyJson?.runId === "string" ? result.bodyJson.runId : "unknown";
-      log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId} body=${short(result.bodyText, 240)}`);
+      log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId}`);
+
+      // Invoke openclaw agent to get the LLM reply, then send it back to the sender
+      try {
+        const { stdout } = await execFileAsync("openclaw", [
+          "agent", "--agent", "main", "--json",
+          "--message", `[OpenDialogue from ${msg.from}] ${msg.content}`
+        ], { timeout: 120_000 });
+        const jsonStart = stdout.indexOf("{");
+        if (jsonStart !== -1) {
+          const parsed = JSON.parse(stdout.slice(jsonStart)) as { result?: { payloads?: Array<{ text?: string }> } };
+          const replyText = parsed?.result?.payloads?.[0]?.text?.trim();
+          if (replyText) {
+            const statusPort = Number(process.env.OPENDIALOGUE_STATUS_PORT ?? "18791");
+            await fetch(`http://127.0.0.1:${statusPort}/send`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ to: msg.from, conversation_id: msg.conversation_id, content: replyText })
+            });
+            log(`reply sent id=${msg.id} to=${msg.from} content=${short(replyText)}`);
+          }
+        }
+      } catch (replyError) {
+        log(`reply failed id=${msg.id} error=${String(replyError)}`);
+      }
     } catch (error) {
       log(`hook forward failed id=${msg.id} error=${String(error)}`);
       throw error;

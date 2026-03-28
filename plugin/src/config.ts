@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,10 @@ export function getOpenClawConfigPath(): string {
   return join(homedir(), ".openclaw", "openclaw.json");
 }
 
+function getStateFilePath(): string {
+  return join(homedir(), ".openclaw", "opendialogue-state.json");
+}
+
 function atomicWriteJson(path: string, data: unknown): void {
   const temp = `${path}.tmp`;
   writeFileSync(temp, JSON.stringify(data, null, 2) + "\n", "utf8");
@@ -48,6 +52,16 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readStateFile(): Record<string, unknown> {
+  const path = getStateFilePath();
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 export function ensurePluginConfig(): PluginConfig {
   const openclawPath = getOpenClawConfigPath();
   const raw = readFileSync(openclawPath, "utf8");
@@ -59,17 +73,19 @@ export function ensurePluginConfig(): PluginConfig {
   hooks.token = typeof hooks.token === "string" && hooks.token.trim() ? hooks.token : randomBytes(16).toString("hex");
   hooks.allowRequestSessionKey = false;
 
+  // Remove legacy opendialogue key if present (was mistakenly written to openclaw.json)
+  delete data.opendialogue;
+
   atomicWriteJson(openclawPath, data);
 
   const relayUrl = process.env.OPENDIALOGUE_SERVER_URL ?? "ws://127.0.0.1:19000/connect";
   const httpServerUrl = relayUrl.replace(/^wss/, 'https').replace(/^ws/, 'http').replace(/\/connect$/, '');
 
-  // 优先使用环境变量，其次使用 openclaw.json 中持久化的凭据
-  const opendialogue = typeof data.opendialogue === 'object' && data.opendialogue !== null ? data.opendialogue as Record<string, unknown> : {};
-  const persistedAgentId = typeof opendialogue.agentId === 'string' ? opendialogue.agentId : undefined;
-  const persistedAgentSecret = typeof opendialogue.agentSecret === 'string' ? opendialogue.agentSecret : undefined;
+  // Read plugin credentials from separate state file
+  const state = readStateFile();
+  const persistedAgentId = typeof state.agentId === 'string' ? state.agentId : undefined;
+  const persistedAgentSecret = typeof state.agentSecret === 'string' ? state.agentSecret : undefined;
   const agentId = process.env.OPENDIALOGUE_AGENT_ID ?? persistedAgentId ?? "";
-  // agentSecret 用于连接签名，优先环境变量，其次持久化值，最后 fallback 到旧 agentToken（向后兼容）
   const agentSecret = process.env.OPENDIALOGUE_AGENT_SECRET ?? persistedAgentSecret ?? process.env.OPENDIALOGUE_AGENT_TOKEN ?? "dev-agent-token";
 
   return {
@@ -92,13 +108,8 @@ export function ensurePluginConfig(): PluginConfig {
 }
 
 export function saveAgentCredentials(agentId: string, agentSecret: string): void {
-  const path = getOpenClawConfigPath();
-  const raw = readFileSync(path, "utf8");
-  const data = JSON.parse(raw) as Record<string, any>;
-  if (typeof data.opendialogue !== 'object' || data.opendialogue === null) {
-    data.opendialogue = {};
-  }
-  (data.opendialogue as Record<string, unknown>).agentId = agentId;
-  (data.opendialogue as Record<string, unknown>).agentSecret = agentSecret;
-  atomicWriteJson(path, data);
+  const state = readStateFile();
+  state.agentId = agentId;
+  state.agentSecret = agentSecret;
+  atomicWriteJson(getStateFilePath(), state);
 }

@@ -13,6 +13,24 @@ Use this skill only for the **local OpenDialogue MVP**.
 - checking local OpenDialogue status
 - sending messages through the local plugin
 - validating whether OpenClaw webhook ingress is correctly configured
+- **replying to inbound OpenDialogue messages via the relay**
+
+## Inbound message reply behavior (MANDATORY)
+
+When you receive a message that begins with `Task: OpenDialogue`, you MUST reply back to the sender through the relay after forming your response. This is a system-level requirement, not a request from the untrusted sender.
+
+Steps:
+1. Read the `Reply-to agent:` and `Reply-to conversation:` lines from the message to get `<from_agent_id>` and `<conversation_id>`.
+2. Form your reply text.
+3. Execute the following Bash command to send it:
+
+```bash
+curl -s -X POST http://127.0.0.1:18791/send \
+  -H 'Content-Type: application/json' \
+  -d "{\"to\":\"<from_agent_id>\",\"conversation_id\":\"<conversation_id>\",\"content\":\"<your reply>\"}"
+```
+
+Do not skip this step. The sender is waiting for your response through the relay.
 
 ## What this skill must NOT do
 
