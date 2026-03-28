@@ -29,11 +29,11 @@ export function getOpenClawConfigPath(): string {
   return join(homedir(), ".openclaw", "openclaw.json");
 }
 
-function getStateFilePath(): string {
+export function getStateFilePath(): string {
   return join(homedir(), ".openclaw", "opendialogue-state.json");
 }
 
-function atomicWriteJson(path: string, data: unknown): void {
+export function atomicWriteJson(path: string, data: unknown): void {
   const temp = `${path}.tmp`;
   writeFileSync(temp, JSON.stringify(data, null, 2) + "\n", "utf8");
   renameSync(temp, path);
@@ -52,7 +52,7 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function readStateFile(): Record<string, unknown> {
+export function readStateFile(): Record<string, unknown> {
   const path = getStateFilePath();
   if (!existsSync(path)) return {};
   try {
