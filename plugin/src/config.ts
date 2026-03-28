@@ -101,8 +101,8 @@ export function ensurePluginConfig(): PluginConfig {
     agentId,
     agentToken: agentSecret,
     turnControl: {
-      enforceTurnLimit: parseBoolean(process.env.OPENDIALOGUE_ENFORCE_TURN_LIMIT, false),
-      maxTurnsPerConversation: parseNumber(process.env.OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION, 10)
+      enforceTurnLimit: parseBoolean(process.env.OPENDIALOGUE_ENFORCE_TURN_LIMIT, true),
+      maxTurnsPerConversation: parseNumber(process.env.OPENDIALOGUE_MAX_TURNS_PER_CONVERSATION, 20)
     },
   };
 }
