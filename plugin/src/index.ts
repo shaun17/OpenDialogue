@@ -95,6 +95,20 @@ async function main() {
       const runId = typeof result.bodyJson?.runId === "string" ? result.bodyJson.runId : "unknown";
       log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId}`);
 
+      // Notify the main openclaw session so the user is aware of the inbound message.
+      try {
+        await fetch(`${config.gatewayBaseUrl}${config.hook.path}/wake`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${config.hook.token}` },
+          body: JSON.stringify({
+            text: `[OpenDialogue] Agent ${msg.from} sent you a message (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
+            mode: "now"
+          })
+        });
+      } catch (wakeError) {
+        log(`wake notification failed id=${msg.id} error=${String(wakeError)}`);
+      }
+
       // Invoke openclaw agent to get the LLM reply, then send it back to the sender
       try {
         const { stdout } = await execFileAsync("openclaw", [
