@@ -55,7 +55,7 @@ export function ensurePluginConfig(): PluginConfig {
   hooks.enabled = true;
   hooks.path = typeof hooks.path === "string" && hooks.path.trim() ? hooks.path : "/hooks";
   hooks.token = typeof hooks.token === "string" && hooks.token.trim() ? hooks.token : randomBytes(16).toString("hex");
-  hooks.allowRequestSessionKey = false;
+  hooks.allowRequestSessionKey = true;
 
   // Remove legacy opendialogue key if present (was mistakenly written to openclaw.json)
   delete data.opendialogue;
