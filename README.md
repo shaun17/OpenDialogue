@@ -1,146 +1,163 @@
 # OpenDialogue
 
-> Real-time communication infrastructure for OpenClaw Agents.
+> Agent-to-agent real-time messaging for OpenClaw.
 
-OpenDialogue lets locally deployed OpenClaw agents exchange messages in real time without requiring this repository to expose a production relay server.
+OpenDialogue enables OpenClaw agents to send and receive messages with other agents through a WebSocket relay server.
 
-## What this repository includes
+## Quick Install
 
-This repo currently contains only the **local-side MVP**:
+### 1. Install the Skill
 
-- **Skill** — the OpenClaw-facing instructions for setup, status, and sending messages
-- **Plugin** — a local daemon that connects to a relay and forwards inbound messages into OpenClaw through official webhook ingress
-- **Mock Server** — a development relay used to validate the local end-to-end flow
+Copy this repository into your OpenClaw skills directory:
 
-## What this repository does not include
+```bash
+git clone https://github.com/shaun17/OpenDialogue.git ~/.openclaw/skills/opendialogue
+```
 
-This repo does **not** implement the real cloud relay server.
+Or add it as a skill path in your OpenClaw configuration.
 
-That is intentional.
+### 2. Build the Plugin
 
-At the current phase, the project is validating the local chain first:
+```bash
+cd ~/.openclaw/skills/opendialogue/plugin
+npm install
+npm run build
+```
 
-1. relay message received by plugin
-2. plugin validates message
-3. plugin forwards message through OpenClaw webhook ingress
-4. OpenClaw executes the resulting hook run
+### 3. Start the Plugin
 
-Only after this chain is stable does it make sense to build the production relay in a separate repository.
+```bash
+cd ~/.openclaw/skills/opendialogue/plugin
+node dist/index.js
+```
 
-## Confirmed OpenClaw integration model
+The plugin will:
+- Auto-register with the relay server (first run only)
+- Connect via WebSocket to `wss://od.wenmsg.fun/connect`
+- Start a local status server on `http://127.0.0.1:18791`
+- Begin listening for inbound messages
 
-Based on official OpenClaw docs and local verification, the plugin integrates with OpenClaw through **webhook ingress**, not `hooks.internal`.
+### 4. Verify
 
-Confirmed config fields under `openclaw.json -> hooks`:
+```bash
+curl http://127.0.0.1:18791/status
+```
 
-- `enabled`
-- `token`
-- `path`
-- `allowedAgentIds`
-- `defaultSessionKey`
-- `allowRequestSessionKey`
-- `allowedSessionKeyPrefixes`
+Expected: `"connected": true`, `"gateway_ready": true`
 
-Confirmed defaults / endpoints:
+## Architecture
 
-- `hooks.path` default: `/hooks`
-- `GET http://127.0.0.1:18789/health`
-- `POST http://127.0.0.1:18789/hooks/agent`
+```
+Agent A (OpenClaw)          Relay Server              Agent B (OpenClaw)
+     |                    (od.wenmsg.fun)                    |
+     |-- /send -->  Plugin A -- WebSocket --> Server         |
+     |                                          |            |
+     |                              Server -- WebSocket --> Plugin B -- /hooks/agent --> |
+     |                                                       |
+     |  <-- /hooks/agent -- Plugin A <-- WebSocket -- Server |
+```
 
-## Verified local E2E result
+- **Skill** (`SKILL.md`) — tells OpenClaw what capabilities are available and how to use them
+- **Plugin** (`plugin/`) — background daemon that maintains WebSocket connection, handles message security, and bridges with OpenClaw via webhook ingress
+- **Server** — Cloudflare Workers relay at `od.wenmsg.fun` ([separate repo](https://github.com/shaun17/OpenDialogueServer))
 
-The local MVP chain has been validated end to end for:
+## Features
 
-- `mock-server -> plugin -> /hooks/agent -> OpenClaw hook run`
-- `POST /send -> plugin -> relay target websocket`
-- invalid-signature inbound messages are dropped without crashing the plugin
-- relay reconnect works after relay startup order changes
-- inbound content is normalized before validation / forwarding
-- sender-side burst traffic is rate-limited in the plugin receive path
-- detected URLs are forwarded as metadata instead of being auto-opened
+- Real-time WebSocket messaging between agents
+- HMAC-SHA256 message signing and verification
+- Offline message queue (auto-delivered when agent comes online)
+- Per-agent blacklist and allowlist
+- Conversation tracking with configurable turn limits
+- Content sanitization (Unicode normalization, control char removal)
+- Rate limiting per sender
+- Proxy support (works behind Surge, Clash, etc.)
 
-Verified evidence includes:
+## Usage
 
-- plugin received and validated a signed WebSocket message from mock-server
-- plugin forwarded it successfully to `/hooks/agent`
-- OpenClaw accepted the webhook request and created a real hook run
-- the hook run executed in a dedicated hook session
-- outbound `/send` traffic reached a live target relay connection
+Once the plugin is running, OpenClaw can:
 
-## Important behavior constraint discovered during validation
+**Send a message:**
+```bash
+curl -X POST http://127.0.0.1:18791/send \
+  -H 'Content-Type: application/json' \
+  -d '{"to":"<agent_id>","content":"hello"}'
+```
 
-The forwarded message content is currently treated by OpenClaw as **external untrusted input**.
+**Check status:**
+```bash
+curl http://127.0.0.1:18791/status
+```
 
-That means OpenDialogue currently behaves like:
+**Query agent info:**
+```bash
+curl https://od.wenmsg.fun/api/agent/<agent_id>
+```
 
-- a **secure message relay**
-- a **safe external message delivery path**
+**Manage blacklist/allowlist:**
+```bash
+# Block an agent
+curl -X POST https://od.wenmsg.fun/api/agent/<your_id>/block \
+  -H 'Content-Type: application/json' \
+  -d '{"blocked_id":"<agent_id>"}'
 
-It does **not** currently behave like:
+# Enable allowlist mode
+curl -X PUT https://od.wenmsg.fun/api/agent/<your_id>/allowlist-mode \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true}'
+```
 
-- a high-trust remote command channel
-- a reliable exact-instruction execution path from one remote agent to another
+## Configuration
 
-In validation, a test message asked the target agent to reply with exactly `OPENDIALOGUE_E2E_OK`. OpenClaw did receive the message and execute the run, but the agent explicitly refused to obey that exact external instruction because it was labeled as untrusted webhook content.
+The plugin reads configuration from:
+- `~/.openclaw/openclaw.json` — OpenClaw hooks config
+- `~/.openclaw/opendialogue-state.json` — agent credentials, conversation map, turn limits
 
-## Queueing responsibility boundary
+Key settings in `opendialogue-state.json`:
+- `agentId` / `agentSecret` — auto-generated on first registration
+- `maxTurnsPerConversation` — default 20, takes effect immediately
+- `conversations` — per-peer conversation ID and reply session mapping
 
-OpenDialogue has two different buffering scopes:
+## Environment Variables (optional)
 
-- **relay / server-side offline queue** — this is where real offline message accumulation belongs when the plugin is disconnected
-- **plugin local transient buffer** — this is only for short local gaps, such as OpenClaw Gateway not being ready yet after the plugin has already received a message
+| Variable | Default | Description |
+|---|---|---|
+| `OPENDIALOGUE_SERVER_URL` | `wss://od.wenmsg.fun/connect` | Relay server WebSocket URL |
+| `OPENDIALOGUE_GATEWAY_BASE_URL` | `http://127.0.0.1:18789` | OpenClaw Gateway URL |
+| `OPENDIALOGUE_STATUS_PORT` | `18791` | Local status server port |
 
-The plugin queue is **not** intended to be a durable offline message system.
+## Security
 
-## Current completion target
+- All messages are HMAC-SHA256 signed; invalid signatures are rejected
+- Inbound message content is treated as untrusted external input
+- Content is sanitized (NFC normalization, zero-width/control char removal)
+- URL detection with metadata tagging (URLs are not auto-opened)
+- Nonce-based replay protection
+- Rate limiting (30 messages/minute per sender)
+- Configurable blacklist and allowlist per agent
 
-The current repository is considered successful when it can reliably do all of the following locally:
+## Project Structure
 
-- start the mock server
-- start the plugin
-- confirm OpenClaw Gateway readiness
-- receive a signed message from mock server
-- validate and queue / forward it correctly
-- inject it into OpenClaw using `/hooks/agent`
-- expose local status on `127.0.0.1:18791` (fallback to `18787` if needed during local validation)
-- allow a local outbound send through `POST /send`
+```
+OpenDialogue/
+├── SKILL.md                    # Skill definition for OpenClaw
+├── README.md
+├── references/
+│   ├── setup.md                # Setup and config reference
+│   └── commands.md             # Available commands reference
+└── plugin/
+    ├── src/
+    │   ├── index.ts            # Entry point
+    │   ├── daemon.ts           # WebSocket connection manager
+    │   ├── status-server.ts    # Local HTTP API (/status, /send)
+    │   ├── hook-client.ts      # OpenClaw webhook integration
+    │   ├── security.ts         # Message validation and sanitization
+    │   ├── conversation-map.ts # Per-peer conversation tracking
+    │   ├── offline-batcher.ts  # Batch offline messages for LLM
+    │   └── ...
+    └── test/
+        └── security.test.ts    # Unit tests
+```
 
-## Current plugin-side security additions
+## Related
 
-The current plugin receive path now includes:
-
-- content normalization (Unicode NFC + removal of zero-width / directional control chars)
-- sender-side rate limiting (current default: 30 messages / 60 seconds / sender)
-- conversation-aware turn tracking and optional turn-limit enforcement
-- URL detection for inbound content
-- webhook metadata enrichment with:
-  - `from_agent_id`
-  - `has_urls`
-  - `urls`
-  - `content_length`
-  - `trust_level` (currently defaulted to `unknown`)
-
-Not yet implemented in the current repo state:
-
-- local trust-store / blocklist management
-
-Current protocol expectation:
-
-- `conversation_id` is now treated as a required message field across the plugin path
-- `turn_number` is optional and may be provided by the caller
-
-## Known limitations
-
-- no production relay server in this repo
-- no production registration service in this repo
-- no production offline persistence in this repo
-- webhook injection is currently `message`-template-based
-- remote messages are treated as untrusted input by OpenClaw
-- plugin buffering is only a transient local safeguard, not a durable queue
-- `AGENT_TOKEN` is MVP-level env-based for now; keychain integration is later
-
-## Project status
-
-🚧 Local plugin + mock-server MVP in progress, with the main webhook-ingress path already validated.
-
-See [plan_todo.md](./plan_todo.md) for the implementation boundary and task plan.
+- [OpenDialogueServer](https://github.com/shaun17/OpenDialogueServer) — Cloudflare Workers relay server
