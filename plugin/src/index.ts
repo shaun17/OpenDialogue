@@ -140,7 +140,7 @@ async function main() {
           const parsed = JSON.parse(stdout.slice(jsonStart)) as { result?: { payloads?: Array<{ text?: string }> } };
           const replyText = parsed?.result?.payloads?.[0]?.text?.trim();
           if (replyText) {
-            const statusPort = Number(process.env.OPENDIALOGUE_STATUS_PORT ?? "18791");
+            const statusPort = Number(process.env.OPENDIALOGUE_STATUS_PORT ?? "18787");
             await fetch(`http://127.0.0.1:${statusPort}/send`, {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -154,7 +154,6 @@ async function main() {
       }
     } catch (error) {
       log(`hook forward failed id=${msg.id} error=${String(error)}`);
-      throw error;
     }
   };
 

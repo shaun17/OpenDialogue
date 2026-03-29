@@ -66,28 +66,33 @@ export class OfflineBatcher {
   private async flushBatch(key: string, messages: InboundMsg[]): Promise<void> {
     if (messages.length === 0) return;
 
-    if (messages.length === 1) {
-      // Single message — no batching needed
-      await this.flush(messages[0]!);
-      return;
+    try {
+      if (messages.length === 1) {
+        // Single message — no batching needed
+        await this.flush(messages[0]!);
+        return;
+      }
+
+      // Combine multiple messages into one, sorted by timestamp
+      messages.sort((a, b) => a.timestamp - b.timestamp);
+      const combined: InboundMsg = {
+        id: messages[messages.length - 1]!.id, // use latest message id
+        from: messages[0]!.from,
+        to: messages[0]!.to,
+        conversation_id: messages[messages.length - 1]!.conversation_id,
+        turn_number: messages[messages.length - 1]!.turn_number,
+        timestamp: messages[messages.length - 1]!.timestamp,
+        content: [
+          `[${messages.length} offline messages received at once]`,
+          ...messages.map((m, i) => `[${i + 1}] ${m.content}`),
+        ].join('\n'),
+      };
+
+      await this.flush(combined);
+    } catch {
+      // Errors are already logged by the flush function (forwardToHook).
+      // Swallow here to prevent unhandled promise rejection from crashing the process.
     }
-
-    // Combine multiple messages into one, sorted by timestamp
-    messages.sort((a, b) => a.timestamp - b.timestamp);
-    const combined: InboundMsg = {
-      id: messages[messages.length - 1]!.id, // use latest message id
-      from: messages[0]!.from,
-      to: messages[0]!.to,
-      conversation_id: messages[messages.length - 1]!.conversation_id,
-      turn_number: messages[messages.length - 1]!.turn_number,
-      timestamp: messages[messages.length - 1]!.timestamp,
-      content: [
-        `[${messages.length} offline messages received at once]`,
-        ...messages.map((m, i) => `[${i + 1}] ${m.content}`),
-      ].join('\n'),
-    };
-
-    await this.flush(combined);
   }
 
   /** Number of agents with pending batches */

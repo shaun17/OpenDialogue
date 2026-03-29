@@ -89,7 +89,7 @@ export function startStatusServer(state: DaemonState, queueSize: () => number, s
     res.end("Not Found");
   });
 
-  const port = Number(process.env.OPENDIALOGUE_STATUS_PORT ?? "18791");
+  const port = Number(process.env.OPENDIALOGUE_STATUS_PORT ?? "18787");
   server.listen(port, "127.0.0.1");
   return server;
 }

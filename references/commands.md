@@ -4,7 +4,7 @@
 
 Use:
 
-- `GET http://127.0.0.1:18791/status` (fallback: `18787`)
+- `GET http://127.0.0.1:18787/status`
 
 Return at least:
 
@@ -19,7 +19,7 @@ Return at least:
 
 Use:
 
-- `POST http://127.0.0.1:18791/send`
+- `POST http://127.0.0.1:18787/send`
 
 Body:
 

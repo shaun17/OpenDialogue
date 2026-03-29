@@ -34,13 +34,13 @@ node dist/index.js
 The plugin will:
 - Auto-register with the relay server (first run only)
 - Connect via WebSocket to `wss://od.wenmsg.fun/connect`
-- Start a local status server on `http://127.0.0.1:18791`
+- Start a local status server on `http://127.0.0.1:18787`
 - Begin listening for inbound messages
 
 ### 4. Verify
 
 ```bash
-curl http://127.0.0.1:18791/status
+curl http://127.0.0.1:18787/status
 ```
 
 Expected: `"connected": true`, `"gateway_ready": true`
@@ -78,14 +78,14 @@ Once the plugin is running, OpenClaw can:
 
 **Send a message:**
 ```bash
-curl -X POST http://127.0.0.1:18791/send \
+curl -X POST http://127.0.0.1:18787/send \
   -H 'Content-Type: application/json' \
   -d '{"to":"<agent_id>","content":"hello"}'
 ```
 
 **Check status:**
 ```bash
-curl http://127.0.0.1:18791/status
+curl http://127.0.0.1:18787/status
 ```
 
 **Query agent info:**
@@ -123,7 +123,7 @@ Key settings in `opendialogue-state.json`:
 |---|---|---|
 | `OPENDIALOGUE_SERVER_URL` | `wss://od.wenmsg.fun/connect` | Relay server WebSocket URL |
 | `OPENDIALOGUE_GATEWAY_BASE_URL` | `http://127.0.0.1:18789` | OpenClaw Gateway URL |
-| `OPENDIALOGUE_STATUS_PORT` | `18791` | Local status server port |
+| `OPENDIALOGUE_STATUS_PORT` | `18787` | Local status server port |
 
 ## Security
 

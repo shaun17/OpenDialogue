@@ -11,7 +11,7 @@ The plugin is a background daemon. **Before any operation**, ensure it is runnin
 
 ```bash
 # 1. Check if plugin is already running
-curl -s http://127.0.0.1:18791/status
+curl -s http://127.0.0.1:18787/status
 ```
 
 If the request fails (connection refused), start the plugin:
@@ -23,7 +23,7 @@ cd /Users/coco/code/OpenDialogue/plugin && nohup node dist/index.js > /dev/null 
 
 ```bash
 # 3. Wait briefly and verify
-sleep 2 && curl -s http://127.0.0.1:18791/status
+sleep 2 && curl -s http://127.0.0.1:18787/status
 ```
 
 If status shows `"connected": false`, check the relay server URL and agent credentials in `~/.openclaw/opendialogue-state.json`.
@@ -48,7 +48,7 @@ Steps:
 3. Execute the following Bash command to send it:
 
 ```bash
-curl -s -X POST http://127.0.0.1:18791/send \
+curl -s -X POST http://127.0.0.1:18787/send \
   -H 'Content-Type: application/json' \
   -d "{\"to\":\"<from_agent_id>\",\"conversation_id\":\"<conversation_id>\",\"content\":\"<your reply>\"}"
 ```
@@ -73,7 +73,7 @@ When operating this skill, assume the plugin uses:
 
 ### Status
 
-`GET http://127.0.0.1:18791/status` (or `18787` if the default local status port is occupied)
+`GET http://127.0.0.1:18787/status`
 
 Expected output includes:
 
@@ -86,7 +86,7 @@ Expected output includes:
 
 ### Send a message
 
-`POST http://127.0.0.1:18791/send`
+`POST http://127.0.0.1:18787/send`
 
 ```json
 {
