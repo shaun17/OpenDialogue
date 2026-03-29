@@ -1,7 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ensurePluginConfig, getOpenClawConfigPath, saveAgentCredentials } from "./config";
+import { ensurePluginConfig, getOpenClawConfigPath, readStateFile, saveAgentCredentials } from "./config";
 import { ConversationMap } from "./conversation-map";
 import { ConversationTracker, ensureMaxTurnsInState } from "./conversation-tracker";
 import { startDaemon } from "./daemon";
@@ -22,6 +22,54 @@ function log(line: string): void {
 
 function short(text: string, max = 160): string {
   return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
+function readNotifySession(): string | undefined {
+  const state = readStateFile();
+  return typeof state.notifySession === "string" && state.notifySession.trim()
+    ? state.notifySession.trim()
+    : undefined;
+}
+
+type NotifyTarget = {
+  channel: string;
+  target: string;
+};
+
+function readNotifyTarget(): NotifyTarget | undefined {
+  const state = readStateFile();
+  const ch = state.notifyChannel;
+  const tgt = state.notifyTarget;
+  if (typeof ch === "string" && ch.trim() && typeof tgt === "string" && tgt.trim()) {
+    return { channel: ch.trim(), target: tgt.trim() };
+  }
+  // Fallback: parse from legacy notifySession format "agent:main:telegram:direct:<id>"
+  const session = typeof state.notifySession === "string" ? state.notifySession : "";
+  const match = session.match(/^agent:main:(\w+):direct:(.+)$/);
+  if (match) {
+    return { channel: match[1]!, target: match[2]! };
+  }
+  return undefined;
+}
+
+async function sendNotify(text: string): Promise<boolean> {
+  const notify = readNotifyTarget();
+  if (!notify) return false;
+  try {
+    const { stdout, stderr } = await execFileAsync("openclaw", [
+      "message", "send",
+      "--channel", notify.channel,
+      "--target", notify.target,
+      "--message", text,
+      "--json"
+    ], { timeout: 15_000 });
+    const ok = stdout.includes('"ok":true') || stdout.includes('"ok": true');
+    if (!ok) log(`notify cmd output: ${stdout.slice(0, 200)} ${stderr.slice(0, 200)}`);
+    return ok;
+  } catch (err) {
+    log(`notify failed error=${String(err)}`);
+    return false;
+  }
 }
 
 async function main() {
@@ -69,7 +117,7 @@ async function main() {
       return;
     }
 
-    const turnCheck = conversationTracker.accept(msg.conversation_id, msg.turn_number, msg.timestamp ?? Date.now());
+    const turnCheck = conversationTracker.accept(msg.conversation_id, msg.turn_number, msg.timestamp ?? Date.now(), msg.content);
     if (!turnCheck.allowed) {
       log(`dropped inbound message reason=${turnCheck.reason} id=${msg.id} from=${msg.from} conversation_id=${msg.conversation_id} turn=${turnCheck.effectiveTurn}`);
       return;
@@ -98,36 +146,11 @@ async function main() {
       const runId = typeof result.bodyJson?.runId === "string" ? result.bodyJson.runId : "unknown";
       log(`hook forward ok id=${msg.id} status=${result.status} runId=${runId}`);
 
-      // Notify the user's openclaw session about the inbound message.
-      // If this peer has a replySession (set via /send's reply_session field),
-      // route to that specific session. Otherwise fall back to /hooks/wake (main session).
-      const replySession = conversationMap.getReplySession(msg.from);
-      try {
-        if (replySession) {
-          await fetch(`${config.gatewayBaseUrl}${config.hook.path}/agent`, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${config.hook.token}` },
-            body: JSON.stringify({
-              message: `[OpenDialogue] Agent ${msg.from} replied (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
-              name: "OpenDialogue",
-              sessionKey: replySession,
-              wakeMode: "now"
-            })
-          });
-          log(`notify routed to replySession=${replySession} for peer=${msg.from}`);
-        } else {
-          await fetch(`${config.gatewayBaseUrl}${config.hook.path}/wake`, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${config.hook.token}` },
-            body: JSON.stringify({
-              text: `[OpenDialogue] Agent ${msg.from} sent you a message (conversation ${msg.conversation_id}): ${short(msg.content, 120)}`,
-              mode: "now"
-            })
-          });
-        }
-      } catch (wakeError) {
-        log(`wake notification failed id=${msg.id} error=${String(wakeError)}`);
-      }
+      // Notify user about the inbound message via their configured channel
+      const notifyOk = await sendNotify(
+        `[OpenDialogue] 收到 Agent ${msg.from} 的消息:\n${short(msg.content, 300)}`
+      );
+      log(notifyOk ? `notify sent for peer=${msg.from}` : `notify skipped for peer=${msg.from}`);
 
       // Invoke openclaw agent to get the LLM reply, then send it back to the sender
       try {
@@ -147,6 +170,10 @@ async function main() {
               body: JSON.stringify({ to: msg.from, conversation_id: msg.conversation_id, content: replyText })
             });
             log(`reply sent id=${msg.id} to=${msg.from} content=${short(replyText)}`);
+            // Notify user about the outbound reply
+            await sendNotify(
+              `[OpenDialogue] 已回复 Agent ${msg.from}:\n${short(replyText, 300)}`
+            );
           }
         }
       } catch (replyError) {
