@@ -62,7 +62,7 @@ export function ensurePluginConfig(): PluginConfig {
 
   atomicWriteJson(openclawPath, data);
 
-  const relayUrl = process.env.OPENDIALOGUE_SERVER_URL ?? "ws://127.0.0.1:19000/connect";
+  const relayUrl = process.env.OPENDIALOGUE_SERVER_URL ?? "wss://od.wenmsg.fun/connect";
   const httpServerUrl = relayUrl.replace(/^wss/, 'https').replace(/^ws/, 'http').replace(/\/connect$/, '');
 
   // Read plugin credentials from separate state file

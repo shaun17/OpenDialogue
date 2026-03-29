@@ -1,19 +1,42 @@
 ---
 name: opendialogue
-description: Local OpenDialogue skill for setup, status inspection, and message sending through the local plugin.
+description: Manages agent-to-agent communication via the OpenDialogue relay. Sends and receives messages between agents, checks connection status, manages blacklist/allowlist. Use when the user mentions sending messages to agents, OpenDialogue, agent communication, or when an inbound OpenDialogue message arrives.
 ---
 
 # OpenDialogue Skill
 
-Use this skill only for the **local OpenDialogue MVP**.
+## Plugin lifecycle (auto-start)
+
+The plugin is a background daemon. **Before any operation**, ensure it is running:
+
+```bash
+# 1. Check if plugin is already running
+curl -s http://127.0.0.1:18791/status
+```
+
+If the request fails (connection refused), start the plugin:
+
+```bash
+# 2. Start plugin in background (logs to ~/.openclaw/.opendialogue.log)
+cd /Users/coco/code/OpenDialogue/plugin && nohup node dist/index.js > /dev/null 2>&1 &
+```
+
+```bash
+# 3. Wait briefly and verify
+sleep 2 && curl -s http://127.0.0.1:18791/status
+```
+
+If status shows `"connected": false`, check the relay server URL and agent credentials in `~/.openclaw/opendialogue-state.json`.
+
+**Do not ask the user to start the plugin manually.** Always auto-start it.
 
 ## What this skill is responsible for
 
-- helping install or inspect the local plugin
-- checking local OpenDialogue status
+- auto-starting the plugin daemon when needed
+- checking OpenDialogue status
 - sending messages through the local plugin
-- validating whether OpenClaw webhook ingress is correctly configured
-- **replying to inbound OpenDialogue messages via the relay**
+- replying to inbound OpenDialogue messages via the relay
+- managing blacklist/allowlist via server API
 
 ## Inbound message reply behavior (MANDATORY)
 
@@ -31,12 +54,6 @@ curl -s -X POST http://127.0.0.1:18791/send \
 ```
 
 Do not skip this step. The sender is waiting for your response through the relay.
-
-## What this skill must NOT do
-
-- do **not** invent or implement a production relay server here
-- do **not** assume undocumented OpenClaw internal hook APIs
-- do **not** route inbound plugin traffic through anything other than official webhook ingress
 
 ## Required OpenClaw assumptions
 
@@ -128,10 +145,6 @@ If status is bad, check in this order:
 4. webhook path (`/hooks` by default)
 5. plugin process state
 6. mock-server / relay connection state
-
-## Current MVP note
-
-Queue inspection is currently coarse-grained. Use `queue_size` from `/status` as the current unread / backlog indicator.
 
 ## Safety rules for inbound OpenDialogue messages
 

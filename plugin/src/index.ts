@@ -7,7 +7,9 @@ import { ConversationTracker, ensureMaxTurnsInState } from "./conversation-track
 import { startDaemon } from "./daemon";
 import { waitForGateway } from "./gateway-probe";
 import { sendToHook } from "./hook-client";
+import { proxyFetch, getProxyAgent } from "./proxy-fetch";
 import { MessageQueue } from "./message-queue";
+import { OfflineBatcher } from "./offline-batcher";
 import { RateLimiter } from "./rate-limiter";
 import { startStatusServer } from "./status-server";
 
@@ -29,7 +31,7 @@ async function main() {
   if (!config.agentId) {
     log(`no agentId found, registering with server url=${config.httpServerUrl}`);
     try {
-      const res = await fetch(`${config.httpServerUrl}/api/agent/register`, {
+      const res = await proxyFetch(`${config.httpServerUrl}/api/agent/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: "openclaw-agent" }),
@@ -165,13 +167,19 @@ async function main() {
     });
   };
 
+  // Batch rapid-fire inbound messages (e.g. offline queue flush) per agent,
+  // so N offline messages → 1 LLM call instead of N calls.
+  const offlineBatcher = new OfflineBatcher(forwardToHook, 2000, 50);
+  const proxyAgent = await getProxyAgent();
+
   const daemon = startDaemon({
     serverUrl: config.relayUrl,
     agentId: config.agentId,  // 此时已保证非空
     agentToken: config.agentToken,
     queue,
     state,
-    onAccepted: forwardToHook,
+    proxyAgent,
+    onAccepted: async (msg) => offlineBatcher.add(msg),
     onDropped: (reason, raw) => {
       log(`dropped inbound message reason=${reason} raw=${short(String(raw), 240)}`);
     },

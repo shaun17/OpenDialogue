@@ -22,6 +22,7 @@ export type DaemonOptions = {
   onDropped?: (reason: string, raw: unknown) => void;
   onEvent?: (line: string) => void;
   reconnectDelayMs?: number;
+  proxyAgent?: import("node:http").Agent;
 };
 
 export type DaemonHandle = {
@@ -57,14 +58,18 @@ export function startDaemon(options: DaemonOptions): DaemonHandle {
     const connNonce = randomBytes(16).toString("hex");
     const connMaterial = `${options.agentId}|${options.agentId}|server|connect|connect||${connTs}|${connNonce}`;
     const connSig = createHmac("sha256", options.agentToken).update(connMaterial).digest("hex");
-    ws = new WebSocket(options.serverUrl, {
+    const wsOptions: WebSocket.ClientOptions = {
       headers: {
         "x-agent-id": options.agentId,
         "x-signature": connSig,
         "x-timestamp": String(connTs),
         "x-nonce": connNonce,
       }
-    });
+    };
+    if (options.proxyAgent) {
+      wsOptions.agent = options.proxyAgent;
+    }
+    ws = new WebSocket(options.serverUrl, wsOptions);
 
     ws.on("open", () => {
       options.state.connected = true;
